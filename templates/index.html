@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Campaign Photo Portal</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="card">
+    <h1>📷 Campaign Photo Portal</h1>
+    <p class="sub">Enter the Job Number and your name to start uploading photos.</p>
+
+    {% if submitted is not none %}
+    <p class="banner done">✅ Batch submitted successfully - {{ submitted }} photo(s).</p>
+    {% endif %}
+
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+    <form method="post" action="/start" class="form">
+      <label for="job_number">Job Number</label>
+      <input id="job_number" name="job_number" type="text" inputmode="text"
+             autocomplete="off" autocapitalize="characters" required
+             placeholder="e.g. J457008">
+
+      <label for="employee_name">Your Name</label>
+      <select id="employee_name" name="employee_name" required onchange="toggleOther(this)">
+        <option value="" disabled selected>Select your name...</option>
+        {% for name in employees %}
+        <option value="{{ name }}">{{ name }}</option>
+        {% endfor %}
+        <option value="__other__">Other (type my name)</option>
+      </select>
+      <input id="employee_name_other" name="employee_name_other" type="text"
+             placeholder="Type your name" class="hidden" autocomplete="off">
+
+      <label for="category">Photo Type</label>
+      <select id="category" name="category" required>
+        <option value="" disabled selected>Select photo type...</option>
+        {% for key, label in categories.items() %}
+        <option value="{{ key }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <button type="submit">Start Uploading</button>
+    </form>
+  </main>
+
+  <script>
+    function toggleOther(sel) {
+      var other = document.getElementById('employee_name_other');
+      if (sel.value === '__other__') {
+        other.classList.remove('hidden');
+        other.required = true;
+        other.focus();
+      } else {
+        other.classList.add('hidden');
+        other.required = false;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>{{ session['job_number'] }} - Photo Upload</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="home-link" title="Back to main page">🏠</a>
+      <div>
+        <div class="job">{{ session['job_number'] }}</div>
+        <div class="who">{{ session['employee_name'] }} · {{ category_label }}</div>
+      </div>
+    </div>
+    <div id="counter" class="counter">{{ photos|length }} photo(s)</div>
+  </header>
+
+  {% if finalized %}
+  <div class="banner done">✅ This batch was submitted. You can still view photos below,
+    or go <a href="/">back</a> to start a new job.</div>
+  {% else %}
+  <div class="capture-bar">
+    <label class="btn primary">
+      📸 Take Photo
+      <input type="file" accept="image/*" capture="environment" id="cameraInput" class="hidden">
+    </label>
+    <label class="btn secondary">
+      🖼️ Choose Photos
+      <input type="file" accept="image/*" multiple id="libraryInput" class="hidden">
+    </label>
+  </div>
+  {% endif %}
+
+  <div id="gallery" class="gallery">
+    {% for p in photos %}
+    <a href="/media/{{ p['job_number'] }}/{{ p['category'] }}/{{ p['filename'] }}" target="_blank" class="thumb" data-id="{{ p['id'] }}">
+      <img src="/media/{{ p['job_number'] }}/{{ p['category'] }}/thumbs/{{ p['thumb_filename'] }}" loading="lazy">
+      {% if not finalized %}
+      <button type="button" class="delete-btn" data-id="{{ p['id'] }}" title="Remove photo">×</button>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if not finalized %}
+  <div class="submit-bar">
+    <button id="submitBtn" class="btn primary full">Submit Batch</button>
+  </div>
+  {% endif %}
+
+  <script>
+    window.SESSION_ID = {{ session['id']|tojson }};
+  </script>
+  <script src="/static/upload.js"></script>
+</body>
+</html>

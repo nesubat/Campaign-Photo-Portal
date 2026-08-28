@@ -1,0 +1,4 @@
+{
+  "webAppUrl": "https://script.google.com/macros/s/XXXXXXXXXXXXXXXXXXXXXXXX/exec",
+  "sharedSecret": "choose-a-long-random-string-here"
+}

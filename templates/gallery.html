@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>{{ job_number }} - Gallery</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="home-link" title="Back to main page">🏠</a>
+      <div>
+        <div class="job">{{ job_number }}</div>
+        <div class="who">Supervisor view - read only</div>
+      </div>
+    </div>
+    <div class="counter">{{ photos|length }} photo(s)</div>
+  </header>
+
+  <div class="gallery">
+    {% for p in photos %}
+    <a href="/media/{{ p['job_number'] }}/{{ p['category'] }}/{{ p['filename'] }}" target="_blank" class="thumb">
+      {% if p['local_deleted_at'] %}
+      <div class="thumb-cleaned">☁️<br>View on Drive</div>
+      {% else %}
+      <img src="/media/{{ p['job_number'] }}/{{ p['category'] }}/thumbs/{{ p['thumb_filename'] }}" loading="lazy">
+      {% endif %}
+      <span class="tag {{ 'synced' if p['drive_status'] == 'synced' else 'pending' }}">
+        {{ p['employee_name'] }} · {{ categories.get(p['category'], p['category']) }} ·
+        {{ 'Drive ✓' if p['drive_status'] == 'synced' else 'syncing…' }}
+      </span>
+    </a>
+    {% else %}
+    <p class="sub">No photos uploaded for this job yet.</p>
+    {% endfor %}
+  </div>
+</body>
+</html>
