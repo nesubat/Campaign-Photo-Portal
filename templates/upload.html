@@ -18,22 +18,59 @@
     <div id="counter" class="counter">{{ photos|length }} photo(s)</div>
   </header>
 
+  {% if resumed_count %}
+  <div class="banner done">📥 Resumed {{ resumed_count }} existing consignment(s) for this job from Google Drive.</div>
+  {% endif %}
+
   {% if finalized %}
   <div class="banner done">✅ This batch was submitted. You can still view photos below,
     or go <a href="/">back</a> to start a new job.</div>
   {% else %}
+    {% if consignment_logging %}
+    <div id="consignmentBar" class="consignment-bar">
+      <label for="keyValueInput" class="field-label">Consignment number or Store name</label>
+      <div class="consignment-row">
+        <div class="autocomplete-wrap">
+          <input type="text" id="keyValueInput" placeholder="Scan or type..." autocomplete="off">
+          <div id="keyValueSuggestions" class="autocomplete-list hidden"></div>
+        </div>
+        <button type="button" id="keyValueGo" class="btn primary small">Set</button>
+      </div>
+      <div id="consignmentStatus" class="consignment-status hidden"></div>
+      <div id="itemIdRow" class="consignment-row hidden">
+        <input type="text" id="itemIdInput" placeholder="Item ID (optional)" autocomplete="off">
+        <button type="button" id="itemIdAdd" class="btn secondary small">Add</button>
+      </div>
+      <div id="itemIdChips" class="chips"></div>
+    </div>
+    {% endif %}
   <div class="capture-bar">
-    <label class="btn primary">
+    <label class="btn primary" id="cameraLabel">
       📸 Take Photo
       <input type="file" accept="image/*" capture="environment" id="cameraInput" class="hidden">
     </label>
-    <label class="btn secondary">
+    <label class="btn secondary" id="libraryLabel">
       🖼️ Choose Photos
       <input type="file" accept="image/*" multiple id="libraryInput" class="hidden">
     </label>
   </div>
   {% endif %}
 
+  {% if consignment_logging %}
+  <div id="uploadingStrip" class="uploading-strip"></div>
+  <div id="gallery" class="sections"></div>
+
+  <dialog id="sectionDialog" class="section-dialog">
+    <div class="section-dialog-header">
+      <h2 id="sectionDialogTitle"></h2>
+      <button type="button" id="sectionDialogClose" class="dialog-close" aria-label="Close">×</button>
+    </div>
+    <div class="section-dialog-body">
+      <div id="sectionDialogChips" class="chips"></div>
+      <div id="sectionDialogGallery" class="gallery section-dialog-gallery"></div>
+    </div>
+  </dialog>
+  {% else %}
   <div id="gallery" class="gallery">
     {% for p in photos %}
     <a href="/media/{{ p['job_number'] }}/{{ p['category'] }}/{{ p['filename'] }}" target="_blank" class="thumb" data-id="{{ p['id'] }}">
@@ -44,6 +81,7 @@
     </a>
     {% endfor %}
   </div>
+  {% endif %}
 
   {% if not finalized %}
   <div class="submit-bar">
@@ -53,6 +91,10 @@
 
   <script>
     window.SESSION_ID = {{ session['id']|tojson }};
+    window.CONSIGNMENT_LOGGING = {{ consignment_logging|default(false)|tojson }};
+    window.INITIAL_SECTIONS = {{ sections_json|default([])|tojson }};
+    window.FINALIZED = {{ finalized|default(false)|tojson }};
+    window.CONSIGNMENT_VALUES = {{ consignment_values|default([])|tojson }};
   </script>
   <script src="/static/upload.js"></script>
 </body>

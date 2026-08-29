@@ -28,6 +28,36 @@ body {
   margin-top: 20px; padding: 14px; font-size: 16px; font-weight: 700;
   background: #2f5597; color: #fff; border: none; border-radius: 10px;
 }
+.checkbox-label {
+  display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px;
+  margin-top: 10px;
+}
+.checkbox-label input { width: auto; }
+
+/* Overrides .form button's default (big, primary-colored) styling - this is
+   a secondary, rarely-used action, not another call to action. */
+.form .link-btn {
+  margin-top: 4px; padding: 6px 0; width: auto; align-self: flex-start;
+  background: transparent; color: #2f5597; border: none;
+  font-size: 13px; font-weight: 600; text-decoration: underline; cursor: pointer;
+}
+
+/* --- Full-page loading overlay (shown from "Start Uploading" until the
+   upload page has loaded - starting a session can take a couple seconds,
+   e.g. checking Drive for a job to resume) --- */
+.page-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(242,244,247,0.92);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px;
+}
+.page-overlay .spinner-ring {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 4px solid #d0d5dd; border-top-color: #2f5597;
+  animation: spin 0.8s linear infinite;
+}
+.page-overlay p { color: #444; font-size: 14px; font-weight: 600; margin: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* --- Session / upload page --- */
 .topbar {
@@ -60,10 +90,106 @@ body {
 .btn.primary { background: #2f5597; color: #fff; }
 .btn.secondary { background: #e8eef7; color: #2f5597; }
 .btn.full { width: 100%; }
+.btn.small { flex: none; padding: 12px 16px; font-size: 14px; }
+.btn.disabled { opacity: 0.45; pointer-events: none; }
+
+/* --- Consignment / Store logging (opt-in "keep logs" sessions only) --- */
+.consignment-bar {
+  margin: 10px 16px 0; padding: 12px 14px; background: #fff; border-radius: 12px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06); display: flex; flex-direction: column; gap: 8px;
+}
+.consignment-bar .field-label { font-weight: 600; font-size: 13px; color: #444; }
+.consignment-row { display: flex; gap: 8px; }
+.consignment-row input {
+  width: 100%; padding: 12px; font-size: 16px; border: 1px solid #d0d5dd; border-radius: 8px;
+}
+.autocomplete-wrap { position: relative; flex: 1; }
+.autocomplete-list {
+  position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; z-index: 20;
+  background: #fff; border: 1px solid #d0d5dd; border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.12); max-height: 220px; overflow-y: auto;
+}
+.autocomplete-item { padding: 12px 14px; font-size: 15px; cursor: pointer; }
+.autocomplete-item:not(:last-child) { border-bottom: 1px solid #eef0f3; }
+.autocomplete-item:hover, .autocomplete-item:active { background: #e8eef7; }
+.consignment-status {
+  font-size: 13px; color: #2f5597; background: #e8eef7; padding: 8px 10px; border-radius: 8px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  background: #e8eef7; color: #2f5597; font-size: 16px; font-weight: 600;
+  padding: 8px 8px 8px 14px; border-radius: 999px;
+  display: flex; align-items: center; gap: 8px;
+}
+.chip-remove {
+  background: rgba(47,85,151,0.15); color: #2f5597; border: none;
+  width: 24px; height: 24px; border-radius: 50%; font-size: 16px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  flex-shrink: 0;
+}
+.chip-remove:hover { background: rgba(47,85,151,0.3); }
 
 .gallery {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
   padding: 4px 16px 90px;
+}
+
+.uploading-strip {
+  display: flex; gap: 6px; padding: 0 16px; flex-wrap: wrap;
+}
+.uploading-strip:empty { padding: 0; }
+.uploading-strip .thumb { width: 70px; height: 70px; margin-top: 10px; }
+
+/* --- Consignment cards (tappable, open the popup below) --- */
+.sections {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 10px 16px 90px;
+}
+.consignment-card {
+  background: #fff; border-radius: 14px; box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+  padding: 14px; text-align: left; border: none; width: 100%;
+  display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.consignment-card:active { background: #f5f7fa; }
+.consignment-card-header { font-size: 17px; font-weight: 700; color: #1a1a1a; }
+.consignment-card-subheader { font-size: 13px; color: #666; }
+.consignment-card-preview { display: flex; gap: 6px; align-items: center; }
+.consignment-card-preview .thumb { width: 60px; height: 60px; flex-shrink: 0; }
+.consignment-card-more {
+  width: 60px; height: 60px; flex-shrink: 0; border-radius: 8px; background: #e8eef7;
+  color: #2f5597; font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+}
+.consignment-card-count { font-size: 12px; color: #888; }
+
+/* --- Section popup (native <dialog> - works consistently on iOS Safari
+   15.4+ and Android Chrome without hand-rolled overlay/scroll-lock code) --- */
+.section-dialog {
+  border: none; border-radius: 16px; padding: 0;
+  width: min(92vw, 480px); max-height: 85vh;
+  margin: auto; /* centers a non-fullscreen <dialog> in all supporting browsers */
+}
+.section-dialog::backdrop { background: rgba(0,0,0,0.5); }
+.section-dialog-header {
+  position: sticky; top: 0; z-index: 1; background: #2f5597; color: #fff;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-radius: 16px 16px 0 0;
+}
+.section-dialog-header h2 { font-size: 17px; margin: 0; }
+.dialog-close {
+  background: rgba(255,255,255,0.2); color: #fff; border: none;
+  width: 32px; height: 32px; border-radius: 50%; font-size: 18px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  flex-shrink: 0;
+}
+.section-dialog-body {
+  padding: 14px 16px 20px; overflow-y: auto; max-height: calc(85vh - 58px);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.section-dialog-gallery { padding: 0; }
+.section-dialog-gallery .delete-btn {
+  width: 32px; height: 32px; font-size: 18px; top: 6px; right: 6px;
 }
 .thumb {
   position: relative; display: block; aspect-ratio: 1/1; overflow: hidden;

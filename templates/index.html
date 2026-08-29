@@ -33,20 +33,46 @@
       </select>
       <input id="employee_name_other" name="employee_name_other" type="text"
              placeholder="Type your name" class="hidden" autocomplete="off">
+      <button type="button" id="manageNamesBtn" class="link-btn">Manage names</button>
 
       <label for="category">Photo Type</label>
-      <select id="category" name="category" required>
+      <select id="category" name="category" required onchange="toggleKeepLogs(this)">
         <option value="" disabled selected>Select photo type...</option>
         {% for key, label in categories.items() %}
         <option value="{{ key }}">{{ label }}</option>
         {% endfor %}
       </select>
 
+      <div id="keepLogsRow" class="hidden">
+        <label class="checkbox-label">
+          <input type="checkbox" id="keep_logs" name="keep_logs" checked>
+          Keep proof logs (Consignment #, Item ID, Google Sheet)
+        </label>
+      </div>
+
       <button type="submit">Start Uploading</button>
     </form>
   </main>
 
+  <div id="startOverlay" class="page-overlay hidden" aria-live="polite">
+    <div class="spinner-ring"></div>
+    <p>Starting upload session...</p>
+  </div>
+
+  <dialog id="employeesDialog" class="section-dialog">
+    <div class="section-dialog-header">
+      <h2>Manage Names</h2>
+      <button type="button" id="employeesDialogClose" class="dialog-close" aria-label="Close">×</button>
+    </div>
+    <div class="section-dialog-body">
+      <div id="employeesList" class="chips"></div>
+    </div>
+  </dialog>
+
   <script>
+    var CONSIGNMENT_LOGGING_CATEGORY = {{ consignment_logging_category|tojson }};
+    var EMPLOYEES = {{ employees|tojson }};
+
     function toggleOther(sel) {
       var other = document.getElementById('employee_name_other');
       if (sel.value === '__other__') {
@@ -58,6 +84,94 @@
         other.required = false;
       }
     }
+
+    function toggleKeepLogs(sel) {
+      var row = document.getElementById('keepLogsRow');
+      row.classList.toggle('hidden', sel.value !== CONSIGNMENT_LOGGING_CATEGORY);
+    }
+
+    (function () {
+      var form = document.querySelector('form.form');
+      var overlay = document.getElementById('startOverlay');
+      if (!form || !overlay) return;
+      form.addEventListener('submit', function () {
+        // Native required-field validation already ran by the time submit
+        // fires, so this only shows once the form is actually being sent -
+        // stays up through the redirect to the upload page loading in.
+        overlay.classList.remove('hidden');
+        var btn = form.querySelector('button[type="submit"]');
+        if (btn) btn.disabled = true;
+      });
+    })();
+
+    (function () {
+      var manageNamesBtn = document.getElementById('manageNamesBtn');
+      var employeesDialog = document.getElementById('employeesDialog');
+      var employeesDialogClose = document.getElementById('employeesDialogClose');
+      var employeesList = document.getElementById('employeesList');
+      var employeeSelect = document.getElementById('employee_name');
+
+      function renderEmployeesList() {
+        employeesList.innerHTML = '';
+        EMPLOYEES.forEach(function (name) {
+          var chip = document.createElement('span');
+          chip.className = 'chip';
+
+          var label = document.createElement('span');
+          label.textContent = name;
+          chip.appendChild(label);
+
+          var removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.className = 'chip-remove';
+          removeBtn.textContent = '×';
+          removeBtn.title = 'Remove ' + name;
+          removeBtn.addEventListener('click', function () { removeEmployee(name); });
+          chip.appendChild(removeBtn);
+
+          employeesList.appendChild(chip);
+        });
+      }
+
+      function removeEmployee(name) {
+        if (!confirm('Remove "' + name + '" from the name list?')) return;
+        fetch('/api/employees/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name }),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (!data.ok) throw new Error(data.error || 'Could not remove name.');
+            EMPLOYEES = data.employees;
+            renderEmployeesList();
+            // Also drop it from the actual dropdown so it's reflected immediately.
+            Array.prototype.slice.call(employeeSelect.querySelectorAll('option')).forEach(function (opt) {
+              if (opt.value === name) opt.remove();
+            });
+          })
+          .catch(function (err) { alert(err.message); });
+      }
+
+      if (manageNamesBtn) {
+        manageNamesBtn.addEventListener('click', function () {
+          renderEmployeesList();
+          if (typeof employeesDialog.showModal === 'function') {
+            employeesDialog.showModal();
+          } else {
+            employeesDialog.setAttribute('open', '');
+          }
+        });
+      }
+      if (employeesDialogClose) {
+        employeesDialogClose.addEventListener('click', function () { employeesDialog.close(); });
+      }
+      if (employeesDialog) {
+        employeesDialog.addEventListener('click', function (e) {
+          if (e.target === employeesDialog) employeesDialog.close();
+        });
+      }
+    })();
   </script>
 </body>
 </html>
