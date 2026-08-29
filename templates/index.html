@@ -69,9 +69,13 @@
     </div>
   </dialog>
 
+  <script id="pageData"
+          data-consignment-logging-category='{{ consignment_logging_category|tojson }}'
+          data-employees='{{ employees|tojson }}'></script>
   <script>
-    var CONSIGNMENT_LOGGING_CATEGORY = {{ consignment_logging_category|tojson }};
-    var EMPLOYEES = {{ employees|tojson }};
+    var pageData = document.getElementById('pageData').dataset;
+    var CONSIGNMENT_LOGGING_CATEGORY = JSON.parse(pageData.consignmentLoggingCategory);
+    var EMPLOYEES = JSON.parse(pageData.employees);
 
     function toggleOther(sel) {
       var other = document.getElementById('employee_name_other');

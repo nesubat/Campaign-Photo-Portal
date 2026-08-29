@@ -89,12 +89,19 @@
   </div>
   {% endif %}
 
+  <script id="pageData"
+          data-session-id='{{ session["id"]|tojson }}'
+          data-consignment-logging='{{ consignment_logging|default(false)|tojson }}'
+          data-initial-sections='{{ sections_json|default([])|tojson }}'
+          data-finalized='{{ finalized|default(false)|tojson }}'
+          data-consignment-values='{{ consignment_values|default([])|tojson }}'></script>
   <script>
-    window.SESSION_ID = {{ session['id']|tojson }};
-    window.CONSIGNMENT_LOGGING = {{ consignment_logging|default(false)|tojson }};
-    window.INITIAL_SECTIONS = {{ sections_json|default([])|tojson }};
-    window.FINALIZED = {{ finalized|default(false)|tojson }};
-    window.CONSIGNMENT_VALUES = {{ consignment_values|default([])|tojson }};
+    var pageData = document.getElementById('pageData').dataset;
+    window.SESSION_ID = JSON.parse(pageData.sessionId);
+    window.CONSIGNMENT_LOGGING = JSON.parse(pageData.consignmentLogging);
+    window.INITIAL_SECTIONS = JSON.parse(pageData.initialSections);
+    window.FINALIZED = JSON.parse(pageData.finalized);
+    window.CONSIGNMENT_VALUES = JSON.parse(pageData.consignmentValues);
   </script>
   <script src="/static/upload.js"></script>
 </body>
