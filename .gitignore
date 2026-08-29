@@ -1,2 +1,16 @@
 uploads/
 __pycache__/
+.env
+data/drive_config.json
+
+# Runtime SQLite database - db.init_db() creates this (and its schema) from
+# scratch on first run, so it must never ship as a committed file.
+data/portal.db
+data/portal.db-shm
+data/portal.db-wal
+data/portal.db-journal
+
+# Virtual environments - regenerate with: py -m venv venv && pip install -r requirements.txt
+venv/
+.venv/
+env/

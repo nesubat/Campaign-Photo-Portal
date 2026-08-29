@@ -51,8 +51,8 @@ if __name__ == "__main__":
         print("[startup] Drive sync configured - background relay starting.")
     else:
         print(
-            "[startup] Drive sync NOT configured yet (data/drive_config.json missing "
-            "or incomplete). Photos will save locally only until you deploy "
+            "[startup] Drive sync NOT configured yet (.env missing or incomplete - see "
+            ".env.example). Photos will save locally only until you deploy "
             "apps-script/DriveUploader.gs and fill that file in."
         )
     drive_sync.start_background_sync()

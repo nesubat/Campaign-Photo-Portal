@@ -42,8 +42,8 @@
  *  the code alone does NOT update a live Web App URL.
  ***********************************************************************/
 
-const SHARED_SECRET = 'IjbxBpCaXD7zlNyhPFl2uhQWgRbdt0';      // must match drive_config.json
-const PARENT_FOLDER_ID = '14L_NMl5jchc1l11PhLQ5WKlpIfqUQMuy'; // Drive folder that holds every <JobNumber> folder
+const SHARED_SECRET = PropertiesService.getScriptProperties().getProperty('SHARED_SECRET');      // must match drive_config.json
+const PARENT_FOLDER_ID = PropertiesService.getScriptProperties().getProperty('TARGET_FOLDER_ID'); // Drive folder that holds every <JobNumber> folder
 
 function doPost(e) {
   try {

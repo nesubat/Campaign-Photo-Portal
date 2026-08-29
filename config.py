@@ -3,15 +3,18 @@ Central configuration for the Campaign Photo Portal.
 Change values here rather than hunting through app.py.
 """
 import json
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")  # DRIVE_WEBAPP_URL / DRIVE_SHARED_SECRET - see .env.example
 
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = BASE_DIR / "uploads"
 DB_PATH = DATA_DIR / "portal.db"
 EMPLOYEES_FILE = DATA_DIR / "employees.json"
-DRIVE_CONFIG_FILE = DATA_DIR / "drive_config.json"
 
 # Thumbnail size for the on-page gallery grid (full-res original is always kept).
 THUMB_MAX_PX = 480
@@ -49,13 +52,12 @@ def load_employees():
 
 def load_drive_config():
     """
-    Google Drive relay settings, filled in after you deploy apps-script/DriveUploader.gs.
-    Returns None if not configured yet (Drive sync is skipped, local copy still works).
+    Google Drive relay settings, read from .env (see .env.example) once you've
+    deployed apps-script/DriveUploader.gs. Returns None if not configured yet
+    (Drive sync is skipped, local copy still works).
     """
-    if not DRIVE_CONFIG_FILE.exists():
+    web_app_url = (os.environ.get("DRIVE_WEBAPP_URL") or "").strip()
+    shared_secret = (os.environ.get("DRIVE_SHARED_SECRET") or "").strip()
+    if not web_app_url or not shared_secret:
         return None
-    with open(DRIVE_CONFIG_FILE, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-    if not cfg.get("webAppUrl") or not cfg.get("sharedSecret"):
-        return None
-    return cfg
+    return {"webAppUrl": web_app_url, "sharedSecret": shared_secret}

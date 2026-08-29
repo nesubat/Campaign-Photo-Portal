@@ -85,6 +85,13 @@ def now_iso():
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def now_filename_stamp():
+    """Microsecond-precision local timestamp for building unique filenames -
+    now_iso() only keeps second precision, which isn't fine-grained enough to
+    guarantee two photos landing in the same second never collide."""
+    return datetime.now().strftime("%Y%m%dT%H%M%S%f")
+
+
 def ensure_job(job_number):
     conn = get_conn()
     conn.execute(

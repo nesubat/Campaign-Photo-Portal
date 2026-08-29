@@ -34,7 +34,7 @@ _SAFE_CHARS = re.compile(r"[^A-Za-z0-9._ -]+")
 ALLOWED_EXT = {"jpg", "jpeg", "png", "webp", "heic", "heif"}
 
 
-def sanitize_job_number(raw: str) -> str:
+def sanitize_for_filename(raw: str) -> str:
     cleaned = _SAFE_CHARS.sub("_", raw.strip())
     cleaned = cleaned.strip(". ")  # no leading/trailing dots or spaces (Windows folder rules)
     return cleaned
@@ -61,7 +61,7 @@ def index():
 @app.route("/start", methods=["POST"])
 def start():
     raw_job = request.form.get("job_number", "")
-    job_number = sanitize_job_number(raw_job)
+    job_number = sanitize_for_filename(raw_job)
     if not job_number:
         return render_template(
             "index.html", employees=load_employees(), categories=CATEGORIES,
@@ -127,7 +127,7 @@ def api_upload():
 
     job_number = sess["job_number"]
     category = sess["category"]
-    unique_name = f"{db.now_iso().replace(':', '').replace('-', '')}_{uuid.uuid4().hex[:8]}.{ext}"
+    unique_name = f"{sanitize_for_filename(sess['employee_name'])}-{db.now_filename_stamp()}.{ext}"
 
     raw_bytes = file.read()
     job_dir(job_number, category).mkdir(parents=True, exist_ok=True)
@@ -198,7 +198,7 @@ def api_finalize():
 
 @app.route("/gallery/<job_number>")
 def gallery(job_number):
-    job_number = sanitize_job_number(job_number)
+    job_number = sanitize_for_filename(job_number)
     photos = db.uploads_for_job(job_number)
     return render_template(
         "gallery.html", job_number=job_number, photos=photos, categories=CATEGORIES
@@ -241,8 +241,8 @@ if __name__ == "__main__":
         print("[startup] Drive sync configured - background relay starting.")
     else:
         print(
-            "[startup] Drive sync NOT configured yet (data/drive_config.json missing "
-            "or incomplete). Photos will save locally only until you deploy "
+            "[startup] Drive sync NOT configured yet (.env missing or incomplete - see "
+            ".env.example). Photos will save locally only until you deploy "
             "apps-script/DriveUploader.gs and fill that file in."
         )
     drive_sync.start_background_sync()

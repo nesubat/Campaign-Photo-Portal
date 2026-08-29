@@ -18,7 +18,7 @@ mirrored to a company Google Drive folder in the background.
 | `templates/`, `static/` | The web pages staff and supervisors see |
 | `apps-script/DriveUploader.gs` | Deploy this separately to Google Apps Script |
 | `data/employees.json` | Preset name dropdown - edit with real staff names |
-| `data/drive_config.json.example` | Copy to `drive_config.json` once Drive is set up |
+| `.env.example` | Copy to `.env` once Drive is set up (never committed - see .gitignore) |
 
 ## 1. First-time setup
 
@@ -64,8 +64,9 @@ To turn it on:
 1. Open `apps-script/DriveUploader.gs` and follow the deploy steps in its
    header comment (uses **your** company Google account - script.google.com,
    no Cloud Console access needed).
-2. Copy `data/drive_config.json.example` to `data/drive_config.json` and
-   fill in the Web App URL and the shared secret you chose.
+2. Copy `.env.example` to `.env` and fill in `DRIVE_WEBAPP_URL` (the Web App
+   URL) and `DRIVE_SHARED_SECRET` (the secret you chose). `.env` is
+   gitignored - it holds a real secret, so it must never be committed.
 3. Restart `serve.py`. You'll see `Drive sync configured` at startup.
 
 Every photo already on disk that hasn't synced yet will pick up
