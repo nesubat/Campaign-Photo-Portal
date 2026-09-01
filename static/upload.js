@@ -112,21 +112,44 @@
       return a;
     }
 
-    function buildChip(cid, itemId) {
+    function buildChip(cid, item) {
       var chip = document.createElement('span');
       chip.className = 'chip';
 
+      // A count-1 chip just gets a single delete (x); once the same Item ID
+      // has been scanned more than once, +/- step buttons flank the label
+      // instead so a stray extra scan can be corrected without retyping.
+      if (item.count > 1) {
+        var minus = document.createElement('button');
+        minus.type = 'button';
+        minus.className = 'chip-step';
+        minus.textContent = '−';
+        minus.title = 'Remove one scan of ' + item.value;
+        minus.addEventListener('click', function () { stepItemId(cid, item.value, -1); });
+        chip.appendChild(minus);
+      }
+
       var label = document.createElement('span');
-      label.textContent = itemId;
+      label.textContent = item.label;
       chip.appendChild(label);
 
-      var removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'chip-remove';
-      removeBtn.textContent = '×';
-      removeBtn.title = 'Remove ' + itemId;
-      removeBtn.addEventListener('click', function () { removeItemId(cid, itemId); });
-      chip.appendChild(removeBtn);
+      if (item.count > 1) {
+        var plus = document.createElement('button');
+        plus.type = 'button';
+        plus.className = 'chip-step';
+        plus.textContent = '+';
+        plus.title = 'Add another scan of ' + item.value;
+        plus.addEventListener('click', function () { stepItemId(cid, item.value, 1); });
+        chip.appendChild(plus);
+      } else {
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'chip-remove';
+        removeBtn.textContent = '×';
+        removeBtn.title = 'Remove ' + item.value;
+        removeBtn.addEventListener('click', function () { stepItemId(cid, item.value, -1); });
+        chip.appendChild(removeBtn);
+      }
 
       return chip;
     }
@@ -135,16 +158,16 @@
       if (!itemIdChips) return;
       itemIdChips.innerHTML = '';
       var section = activeConsignmentId ? sections.get(activeConsignmentId) : null;
-      (section ? section.itemIds : []).forEach(function (id) {
-        itemIdChips.appendChild(buildChip(activeConsignmentId, id));
+      (section ? section.itemIds : []).forEach(function (item) {
+        itemIdChips.appendChild(buildChip(activeConsignmentId, item));
       });
     }
 
     function renderDialogChips(section) {
       if (!dialogChips) return;
       dialogChips.innerHTML = '';
-      section.itemIds.forEach(function (id) {
-        dialogChips.appendChild(buildChip(section.consignmentId, id));
+      section.itemIds.forEach(function (item) {
+        dialogChips.appendChild(buildChip(section.consignmentId, item));
       });
     }
 
@@ -240,15 +263,16 @@
       dialog.addEventListener('close', function () { openDialogConsignmentId = null; });
     }
 
-    function removeItemId(cid, itemId) {
-      fetch('/api/consignment/item/remove', {
+    function stepItemId(cid, rawValue, delta) {
+      var url = delta > 0 ? '/api/consignment/item' : '/api/consignment/item/decrement';
+      fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: window.SESSION_ID, consignment_id: cid, item_id: itemId }),
+        body: JSON.stringify({ session_id: window.SESSION_ID, consignment_id: cid, item_id: rawValue }),
       })
         .then(function (r) { return r.json(); })
         .then(function (data) {
-          if (!data.ok) throw new Error(data.error || 'Could not remove Item ID.');
+          if (!data.ok) throw new Error(data.error || 'Could not update Item ID.');
           var section = sections.get(cid);
           if (section) {
             section.itemIds = data.item_ids;
@@ -596,7 +620,7 @@
         .then(function (r) { return r.json(); })
         .then(function (data) {
           if (!data.ok) throw new Error(data.error || 'Submit failed');
-          window.location.href = '/?submitted=' + data.count;
+          window.location.href = '/?submitted=' + data.count + '&job=' + encodeURIComponent(window.JOB_NUMBER);
         })
         .catch(function (err) {
           alert('Submit failed: ' + err.message);

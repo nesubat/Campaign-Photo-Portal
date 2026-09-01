@@ -200,7 +200,7 @@ def _log_consignment_batch(job_number, consignment_map, cfg, sheet_error_counts)
         consignments_payload.append({
             "keyType": consignment["key_type"],
             "keyValue": consignment["key_value"],
-            "itemIds": db.split_list(consignment["item_ids"]),
+            "itemIds": db.item_id_labels(consignment["item_ids"]),
             "contributors": db.split_list(consignment["contributors"]),
             "photoLinks": links,
             # The actual local moment this consignment was scanned/touched -

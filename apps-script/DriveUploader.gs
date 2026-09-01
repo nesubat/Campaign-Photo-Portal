@@ -234,7 +234,12 @@ function logConsignments_(body) {
           data.push(newRow);
         } else {
           const existingRow = data[rowIndex - 1];
-          const mergedItemIds = mergeLists_(existingRow[3], '\n', itemIds).join('\n');
+          // Item IDs are NOT merged like the other two columns: a repeated
+          // scan changes an entry's own label (e.g. "xxxxxx-2" ->
+          // "xxxxxx-3"), and the portal always sends the complete current
+          // list - union-merging old and new would leave stale labels like
+          // "xxxxxx-2" sitting next to "xxxxxx-3" instead of being replaced.
+          const mergedItemIds = itemIds.join('\n');
           const mergedContributors = mergeLists_(existingRow[4], ',', contributors).join(', ');
           const mergedLinks = mergeLists_(existingRow[5], '\n', photoLinks).join('\n');
           // Columns B-F only - column A (First Logged) is left as originally set.

@@ -12,7 +12,8 @@
     <p class="sub">Enter the Job Number and your name to start uploading photos.</p>
 
     {% if submitted is not none %}
-    <p class="banner done">✅ Batch submitted successfully - {{ submitted }} photo(s).</p>
+    <p class="banner done">✅ Batch submitted successfully for <br>
+      {{ submitted_job if submitted_job else 'this job' }} <br> {{ submitted }} photo(s).</p>
     {% endif %}
 
     {% if error %}<p class="error">{{ error }}</p>{% endif %}

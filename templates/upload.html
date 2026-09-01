@@ -91,6 +91,7 @@
 
   <script id="pageData"
           data-session-id='{{ session["id"]|tojson }}'
+          data-job-number='{{ session["job_number"]|tojson }}'
           data-consignment-logging='{{ consignment_logging|default(false)|tojson }}'
           data-initial-sections='{{ sections_json|default([])|tojson }}'
           data-finalized='{{ finalized|default(false)|tojson }}'
@@ -98,6 +99,7 @@
   <script>
     var pageData = document.getElementById('pageData').dataset;
     window.SESSION_ID = JSON.parse(pageData.sessionId);
+    window.JOB_NUMBER = JSON.parse(pageData.jobNumber);
     window.CONSIGNMENT_LOGGING = JSON.parse(pageData.consignmentLogging);
     window.INITIAL_SECTIONS = JSON.parse(pageData.initialSections);
     window.FINALIZED = JSON.parse(pageData.finalized);

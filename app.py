@@ -69,7 +69,10 @@ def _render_index(**extra):
 
 @app.route("/")
 def index():
-    return _render_index(submitted=request.args.get("submitted", type=int))
+    return _render_index(
+        submitted=request.args.get("submitted", type=int),
+        submitted_job=request.args.get("job"),
+    )
 
 
 @app.route("/api/employees/remove", methods=["POST"])
@@ -188,7 +191,7 @@ def _section_json(section):
     return {
         "consignmentId": section["consignment_id"],
         "keyValue": section["consignment_value"],
-        "itemIds": db.split_list(section["consignment_item_ids"] or ""),
+        "itemIds": db.group_item_ids(section["consignment_item_ids"] or ""),
         "photos": [
             {
                 "id": p["id"],
@@ -232,7 +235,7 @@ def _consignment_json(row, existing):
         consignment_id=row["id"],
         key_type=row["key_type"],
         key_value=row["key_value"],
-        item_ids=db.split_list(row["item_ids"]),
+        item_ids=db.group_item_ids(row["item_ids"]),
         contributors=db.split_list(row["contributors"]),
         photo_count=row["photo_count"],
     )
@@ -285,8 +288,8 @@ def api_consignment_item():
     return jsonify(ok=True, item_ids=item_ids)
 
 
-@app.route("/api/consignment/item/remove", methods=["POST"])
-def api_consignment_item_remove():
+@app.route("/api/consignment/item/decrement", methods=["POST"])
+def api_consignment_item_decrement():
     data = request.get_json(silent=True) or {}
     sess = db.get_session(data.get("session_id", ""))
     if not sess:
@@ -300,7 +303,7 @@ def api_consignment_item_remove():
     if not item_id:
         return jsonify(ok=False, error="Missing Item ID."), 400
 
-    item_ids = db.remove_consignment_item_id(row["id"], item_id)
+    item_ids = db.decrement_consignment_item_id(row["id"], item_id)
     return jsonify(ok=True, item_ids=item_ids)
 
 

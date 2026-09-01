@@ -473,34 +473,74 @@ def touch_consignment_contributor(consignment_id, employee_name):
     conn.commit()
 
 
+def _count_groups(raw_items):
+    """[a, b, a, a] -> [(a, 3), (b, 1)], first-scan order. A repeat isn't a
+    duplicate to collapse away - it's the same physical item scanned again,
+    tracked as a count (see group_item_ids)."""
+    counts = {}
+    order = []
+    for v in raw_items:
+        if v not in counts:
+            counts[v] = 0
+            order.append(v)
+        counts[v] += 1
+    return [(v, counts[v]) for v in order]
+
+
+def group_item_ids(raw_value):
+    """Raw comma-joined item_ids column value -> count-annotated groups,
+    e.g. "xxxxxx" scanned 3 times becomes {"value": "xxxxxx", "count": 3,
+    "label": "xxxxxx-3"}. The count always shows, even at 1 ("xxxxxx-1"),
+    so the label format never shifts as a count changes. `label` is what's
+    shown/synced to the Sheet; `value`/`count` are what the +/- chip
+    controls act on."""
+    return [
+        {"value": v, "count": c, "label": f"{v}-{c}"}
+        for v, c in _count_groups(split_list(raw_value))
+    ]
+
+
+def item_id_labels(raw_value):
+    return [g["label"] for g in group_item_ids(raw_value)]
+
+
 def add_consignment_item_id(consignment_id, item_id):
+    """Appends a raw scan - NOT deduped against existing entries. Scanning
+    the same Item ID again is how its count goes up (see group_item_ids)."""
     conn = get_conn()
     row = conn.execute(
         "SELECT item_ids FROM consignments WHERE id = ?", (consignment_id,)
     ).fetchone()
-    item_ids = split_list(row["item_ids"]) if row else []
-    if item_id not in item_ids:
-        item_ids.append(item_id)
+    raw_items = split_list(row["item_ids"]) if row else []
+    raw_items.append(item_id)
+    new_value = _join_list(raw_items)
     conn.execute(
         "UPDATE consignments SET item_ids = ?, updated_at = ? WHERE id = ?",
-        (_join_list(item_ids), now_iso(), consignment_id),
+        (new_value, now_iso(), consignment_id),
     )
     conn.commit()
-    return item_ids
+    return group_item_ids(new_value)
 
 
-def remove_consignment_item_id(consignment_id, item_id):
+def decrement_consignment_item_id(consignment_id, item_id):
+    """Removes exactly one occurrence of `item_id` (the raw scanned value,
+    not a "-N" display label) - count N drops to N-1, or the entry disappears
+    entirely once N reaches 0. Backs both the sole delete button on a
+    count-1 chip and the "-" step button on a count>1 chip."""
     conn = get_conn()
     row = conn.execute(
         "SELECT item_ids FROM consignments WHERE id = ?", (consignment_id,)
     ).fetchone()
-    item_ids = [x for x in split_list(row["item_ids"]) if x != item_id] if row else []
+    raw_items = split_list(row["item_ids"]) if row else []
+    if item_id in raw_items:
+        raw_items.remove(item_id)  # removes a single occurrence, not every one
+    new_value = _join_list(raw_items)
     conn.execute(
         "UPDATE consignments SET item_ids = ?, updated_at = ? WHERE id = ?",
-        (_join_list(item_ids), now_iso(), consignment_id),
+        (new_value, now_iso(), consignment_id),
     )
     conn.commit()
-    return item_ids
+    return group_item_ids(new_value)
 
 
 def increment_photo_count(consignment_id):

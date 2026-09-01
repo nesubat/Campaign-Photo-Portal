@@ -118,16 +118,16 @@ body {
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   background: #e8eef7; color: #2f5597; font-size: 16px; font-weight: 600;
-  padding: 8px 8px 8px 14px; border-radius: 999px;
+  padding: 8px; border-radius: 999px;
   display: flex; align-items: center; gap: 8px;
 }
-.chip-remove {
+.chip-remove, .chip-step {
   background: rgba(47,85,151,0.15); color: #2f5597; border: none;
   width: 24px; height: 24px; border-radius: 50%; font-size: 16px; line-height: 1;
   display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
   flex-shrink: 0;
 }
-.chip-remove:hover { background: rgba(47,85,151,0.3); }
+.chip-remove:hover, .chip-step:hover { background: rgba(47,85,151,0.3); }
 
 .gallery {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
