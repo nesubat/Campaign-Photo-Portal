@@ -2,7 +2,8 @@
 Campaign Photo Portal - Flask app.
 
 Flow:
-  1. GET  /                 -> job number + "who are you" form
+  0. GET  /login            -> name + 4-digit PIN (see auth.py); everything below requires this
+  1. GET  /                 -> job number form (name comes from the logged-in account)
   2. POST /start            -> creates/finds the job folder, starts a session, redirects in
   3. GET  /session/<id>     -> camera-capture upload page + live gallery for that job
   4. POST /api/upload       -> one photo lands here the instant it's picked; saved to disk
@@ -10,6 +11,7 @@ Flow:
   5. POST /api/finalize     -> marks the session's photos as finalized (the "Submit" button);
                                only finalized photos are picked up for background Drive sync
   6. GET  /gallery/<job>    -> read-only view of everything uploaded for a job (for supervisors)
+  7. GET  /admin            -> admin-only: create/manage user accounts, reset PINs
 
 Run for quick local testing: py app.py
 Run for real use (all-day, several phones):  py serve.py   <- use this one day-to-day
@@ -18,11 +20,17 @@ Both bind 0.0.0.0:5000 so phones on the hotspot/LAN can reach it.
 """
 import io
 import re
+import sqlite3
 import uuid
+from datetime import timedelta
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, send_from_directory
+from flask import (
+    Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory,
+    session,
+)
 from PIL import Image, ImageOps
 
+import auth
 import db
 import drive_sync
 import local_cleanup
@@ -31,17 +39,33 @@ from config import (
     CONSIGNMENT_LOGGING_CATEGORY,
     HOST,
     PORT,
+    SECRET_KEY,
+    SESSION_LIFETIME_DAYS,
     THUMB_MAX_PX,
     UPLOAD_DIR,
     load_drive_config,
-    load_employees,
-    save_employees,
 )
 
 app = Flask(__name__)
+app.secret_key = SECRET_KEY
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=SESSION_LIFETIME_DAYS)
+if not SECRET_KEY:
+    print("[startup] SECRET_KEY not set in .env - login sessions will not work until you set one.")
 
 _SAFE_CHARS = re.compile(r"[^A-Za-z0-9._ -]+")
 ALLOWED_EXT = {"jpg", "jpeg", "png", "webp", "heic", "heif"}
+PIN_RE = re.compile(r"^\d{4}$")
+JOB_NUMBER_RE = re.compile(r"^[Jj]\d{6}$")
+
+
+@app.before_request
+def _load_user():
+    auth.load_current_user()
+
+
+@app.context_processor
+def _inject_user():
+    return {"current_user": g.user}
 
 
 def sanitize_for_filename(raw: str) -> str:
@@ -62,12 +86,13 @@ def thumb_dir(job_number, category):
 
 def _render_index(**extra):
     return render_template(
-        "index.html", employees=load_employees(), categories=CATEGORIES,
+        "index.html", categories=CATEGORIES,
         consignment_logging_category=CONSIGNMENT_LOGGING_CATEGORY, **extra
     )
 
 
 @app.route("/")
+@auth.login_required
 def index():
     return _render_index(
         submitted=request.args.get("submitted", type=int),
@@ -75,37 +100,176 @@ def index():
     )
 
 
-@app.route("/api/employees/remove", methods=["POST"])
-def api_employees_remove():
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    if not name:
-        return jsonify(ok=False, error="Missing name."), 400
+def _render_login(stage, next_url, **extra):
+    """`existing_names` only matters on the 'name' stage (that's the only
+    one with the dropdown) - computed here so every early-return in login()
+    below doesn't have to remember to pass it itself."""
+    if stage == "name":
+        extra.setdefault("existing_names", db.list_active_user_names())
+    return render_template("login.html", stage=stage, next=next_url, **extra)
 
-    employees = load_employees()
-    if name in employees:
-        employees = [e for e in employees if e != name]
-        save_employees(employees)
-    return jsonify(ok=True, employees=employees)
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """One route, one template covering the whole name+PIN flow - login,
+    self-signup, and choosing a PIN (first time or after an admin reset) are
+    all the same handshake, just at different points, so they share a single
+    state machine instead of three separate pages. `stage` tells the
+    template which fields to show; `name` (and, once known, which stage)
+    is threaded through as a hidden field rather than kept in session, so a
+    page refresh/back-button mid-flow just re-asks instead of getting stuck
+    on stale server-side state."""
+    next_url = request.values.get("next") or "/"
+    if request.method == "GET":
+        return _render_login("name", next_url)
+
+    name = (request.form.get("name") or "").strip()
+    if not name:
+        return _render_login("name", next_url, error="Enter your name.")
+
+    if request.form.get("action") == "signup":
+        if db.find_user_by_name(name):
+            return _render_login("name", next_url, error=f'"{name}" is already taken - try another name.')
+        try:
+            # active=0: a self-signup needs an admin's approval before it can
+            # choose a PIN (and therefore before it can log in) - unlike an
+            # admin creating the account directly, nobody has vetted this one yet.
+            db.create_user(name, role="standard", pin_hash=None, active=0)
+        except sqlite3.IntegrityError:
+            return _render_login("name", next_url, error=f'"{name}" is already taken - try another name.')
+        return _render_login("pending_approval", next_url, name=name)
+
+    user = db.find_user_by_name(name)
+    if user is None:
+        return _render_login("confirm_signup", next_url, name=name)
+    if not user["active"]:
+        return _render_login(
+            "name", next_url,
+            error="Your account is waiting for admin approval - check back soon.",
+        )
+    if user["locked_at"]:
+        return _render_login(
+            "name", next_url, error="This account is locked - ask an admin to reset your PIN.",
+        )
+
+    if user["pin_hash"] is None:
+        pin = (request.form.get("pin") or "").strip()
+        pin_confirm = request.form.get("pin_confirm")
+        if pin_confirm is None:  # just arrived at this stage - name submitted, PIN not yet
+            return _render_login("choose_pin", next_url, name=name)
+        if not PIN_RE.match(pin):
+            return _render_login("choose_pin", next_url, name=name, error="PIN must be exactly 4 digits.")
+        if pin != pin_confirm:
+            return _render_login("choose_pin", next_url, name=name, error="PINs don't match.")
+        auth.login_user(auth.set_pin_and_sync(user["id"], pin))
+        return redirect(next_url)
+
+    pin = (request.form.get("pin") or "").strip()
+    if not pin:  # just arrived at this stage - name submitted, PIN not yet
+        return _render_login("enter_pin", next_url, name=name)
+    if not PIN_RE.match(pin) or not auth.verify_pin(pin, user["pin_hash"]):
+        db.record_failed_login(user["id"], auth.max_login_attempts())
+        return _render_login("enter_pin", next_url, name=name, error="Incorrect PIN.")
+
+    db.clear_failed_attempts(user["id"])
+    auth.login_user(user)
+    return redirect(next_url)
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    auth.logout_user()
+    return redirect("/login")
+
+
+@app.route("/change-pin", methods=["GET", "POST"])
+@auth.login_required
+def change_pin():
+    """Self-service PIN change for whoever's already logged in - the only
+    way an admin (who has no one else to reset THEIR pin) can ever get a
+    new one without editing the database directly."""
+    if request.method == "GET":
+        return render_template("change_pin.html", error=None)
+
+    pin = (request.form.get("pin") or "").strip()
+    pin_confirm = (request.form.get("pin_confirm") or "").strip()
+    if not PIN_RE.match(pin):
+        return render_template("change_pin.html", error="PIN must be exactly 4 digits.")
+    if pin != pin_confirm:
+        return render_template("change_pin.html", error="PINs don't match.")
+
+    auth.set_pin_and_sync(g.user["id"], pin)
+    return redirect("/")
+
+
+@app.route("/admin")
+@auth.admin_required
+def admin_page():
+    return render_template("admin.html", users=db.list_users())
+
+
+@app.route("/admin/users", methods=["POST"])
+@auth.admin_required
+def admin_create_user():
+    name = (request.form.get("name") or "").strip()
+    role = "admin" if request.form.get("role") == "admin" else "standard"
+    if not name:
+        flash("Enter a name.")
+    elif db.find_user_by_name(name):
+        flash(f'"{name}" is already taken - try another name.')
+    else:
+        try:
+            db.create_user(name, role=role, pin_hash=None)
+        except sqlite3.IntegrityError:
+            flash(f'"{name}" is already taken - try another name.')
+    return redirect("/admin")
+
+
+@app.route("/admin/users/<int:user_id>/reset-pin", methods=["POST"])
+@auth.admin_required
+def admin_reset_pin(user_id):
+    db.reset_pin(user_id)
+    return redirect("/admin")
+
+
+@app.route("/admin/users/<int:user_id>/approve", methods=["POST"])
+@auth.admin_required
+def admin_approve_user(user_id):
+    """Lets a self-signup account (active=0, no PIN yet) proceed to choose
+    one and log in - see db.create_user's active=0 default for self-signup."""
+    db.set_user_active(user_id, True)
+    return redirect("/admin")
+
+
+@app.route("/admin/users/<int:user_id>/delete", methods=["POST"])
+@auth.admin_required
+def admin_delete_user(user_id):
+    if user_id != g.user["id"]:  # never let an admin delete their own account out from under themselves
+        db.delete_user(user_id)
+    return redirect("/admin")
+
+
+@app.route("/admin/users/<int:user_id>/role", methods=["POST"])
+@auth.admin_required
+def admin_toggle_role(user_id):
+    user = db.get_user(user_id)
+    if user:
+        new_role = "standard" if user["role"] == "admin" else "admin"
+        db.set_user_role(user_id, new_role)
+    return redirect("/admin")
 
 
 @app.route("/start", methods=["POST"])
+@auth.login_required
 def start():
     raw_job = request.form.get("job_number", "")
     job_number = sanitize_for_filename(raw_job)
     if not job_number:
         return _render_index(error="Enter a valid Job Number.")
+    if not JOB_NUMBER_RE.match(job_number):
+        return _render_index(error='Job Number must be "J" followed by exactly 6 digits - e.g. J457008.')
 
-    employee_name = (request.form.get("employee_name") or "").strip()
-    if employee_name == "__other__":
-        employee_name = (request.form.get("employee_name_other") or "").strip()
-        if employee_name:
-            employees = load_employees()
-            if employee_name not in employees:
-                employees.append(employee_name)
-                save_employees(employees)
-    if not employee_name:
-        return _render_index(error="Enter or select your name.")
+    employee_name = g.user["name"]
 
     category = (request.form.get("category") or "").strip()
     if category not in CATEGORIES:
@@ -113,6 +277,10 @@ def start():
 
     job_dir(job_number, category).mkdir(parents=True, exist_ok=True)
     db.ensure_job(job_number)
+
+    existing = db.find_open_session(job_number, employee_name, category)
+    if existing:
+        return redirect(f"/session/{existing['id']}")
 
     keep_logs = category == CONSIGNMENT_LOGGING_CATEGORY and request.form.get("keep_logs") == "on"
 
@@ -204,6 +372,7 @@ def _section_json(section):
 
 
 @app.route("/session/<session_id>")
+@auth.login_required
 def session_page(session_id):
     sess = db.get_session(session_id)
     if not sess:
@@ -242,6 +411,7 @@ def _consignment_json(row, existing):
 
 
 @app.route("/api/consignment/resolve", methods=["POST"])
+@auth.login_required
 def api_consignment_resolve():
     data = request.get_json(silent=True) or {}
     sess = db.get_session(data.get("session_id", ""))
@@ -270,6 +440,7 @@ def api_consignment_resolve():
 
 
 @app.route("/api/consignment/item", methods=["POST"])
+@auth.login_required
 def api_consignment_item():
     data = request.get_json(silent=True) or {}
     sess = db.get_session(data.get("session_id", ""))
@@ -289,6 +460,7 @@ def api_consignment_item():
 
 
 @app.route("/api/consignment/item/decrement", methods=["POST"])
+@auth.login_required
 def api_consignment_item_decrement():
     data = request.get_json(silent=True) or {}
     sess = db.get_session(data.get("session_id", ""))
@@ -308,6 +480,7 @@ def api_consignment_item_decrement():
 
 
 @app.route("/api/upload", methods=["POST"])
+@auth.login_required
 def api_upload():
     session_id = request.form.get("session_id", "")
     sess = db.get_session(session_id)
@@ -374,6 +547,7 @@ def api_upload():
 
 
 @app.route("/api/delete", methods=["POST"])
+@auth.login_required
 def api_delete():
     data = request.get_json(silent=True) or {}
     session_id = data.get("session_id", "")
@@ -401,6 +575,7 @@ def api_delete():
 
 
 @app.route("/api/finalize", methods=["POST"])
+@auth.login_required
 def api_finalize():
     session_id = (request.get_json(silent=True) or {}).get("session_id", "")
     sess = db.get_session(session_id)
@@ -411,6 +586,7 @@ def api_finalize():
 
 
 @app.route("/gallery/<job_number>")
+@auth.login_required
 def gallery(job_number):
     job_number = sanitize_for_filename(job_number)
     photos = db.uploads_for_job(job_number)
@@ -451,6 +627,7 @@ def media_full(job_number, category, filename):
 
 if __name__ == "__main__":
     db.init_db()
+    auth.ensure_bootstrap_admin()
     if load_drive_config():
         print("[startup] Drive sync configured - background relay starting.")
     else:

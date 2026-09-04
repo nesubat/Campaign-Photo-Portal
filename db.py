@@ -3,11 +3,12 @@ SQLite storage for the Campaign Photo Portal.
 One connection per request (Flask app_context), WAL mode so uploads from
 several phones at once don't block each other.
 """
+import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from config import DB_PATH
+from config import DB_PATH, EMPLOYEES_FILE, SESSION_RESUME_WINDOW_HOURS
 
 _local = threading.local()
 
@@ -93,6 +94,31 @@ def init_db():
             resized_at  TEXT NOT NULL,
             PRIMARY KEY (job_number, category)
         );
+
+        -- Login accounts. pin_hash IS NULL means "must choose a PIN" - true
+        -- for a brand-new account (self-signup or admin-created) and, again,
+        -- right after an admin resets someone's forgotten PIN - both cases
+        -- land on the same "choose your PIN" screen. name_norm is the
+        -- trimmed+casefolded form used for case-insensitive uniqueness,
+        -- mirroring consignments.key_norm above. active doubles as
+        -- "approved by an admin" - a self-signup account starts at 0 and
+        -- can't choose a PIN (so can't log in) until an admin approves it;
+        -- an admin creating a user directly sets it to 1 immediately, since
+        -- that IS the approval. There's no "disable an existing account"
+        -- path anymore - see delete_user for that.
+        CREATE TABLE IF NOT EXISTS users (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL,
+            name_norm       TEXT NOT NULL,
+            pin_hash        TEXT,
+            role            TEXT NOT NULL DEFAULT 'standard',
+            failed_attempts INTEGER NOT NULL DEFAULT 0,
+            locked_at       TEXT,
+            active          INTEGER NOT NULL DEFAULT 1,
+            created_at      TEXT NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_name_norm ON users(name_norm);
         """
     )
     conn.commit()
@@ -122,6 +148,37 @@ def _migrate(conn):
     _add_column_if_missing(conn, "uploads", "sheet_synced_at", "sheet_synced_at TEXT")
     _add_column_if_missing(conn, "uploads", "sheet_error", "sheet_error TEXT")
     _add_column_if_missing(conn, "uploads", "sheet_retry_after", "sheet_retry_after TEXT")
+    conn.commit()
+    _import_legacy_employees(conn)
+
+
+def _import_legacy_employees(conn):
+    """One-time migration, first run only: the old free-text name list
+    (data/employees.json, pre-login) had no accounts at all, just display
+    names - importing them as standard users with pin_hash NULL means
+    existing staff keep their name and just set a PIN on next login instead
+    of losing their spot in the list. Only runs while the users table is
+    still empty, so it can never re-import (or re-add someone already
+    removed) on a later restart."""
+    if not EMPLOYEES_FILE.exists():
+        return
+    if conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+        return
+    try:
+        with open(EMPLOYEES_FILE, "r", encoding="utf-8") as f:
+            names = json.load(f)
+    except (OSError, ValueError):
+        return
+    now = now_iso()
+    for name in names:
+        name = (name or "").strip()
+        if not name:
+            continue
+        conn.execute(
+            """INSERT OR IGNORE INTO users (name, name_norm, role, created_at)
+               VALUES (?, ?, 'standard', ?)""",
+            (name, name.casefold(), now),
+        )
     conn.commit()
 
 
@@ -158,6 +215,30 @@ def create_session(session_id, job_number, employee_name, category, keep_logs=Fa
 def get_session(session_id):
     conn = get_conn()
     return conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+
+
+def find_open_session(job_number, employee_name, category):
+    """The "resume where you left off" lookup for /start - an existing,
+    not-yet-finalized session for the same job+employee+category, as long as
+    it was started within SESSION_RESUME_WINDOW_HOURS. That window matters:
+    without it, re-entering the same job number weeks later (a genuinely new,
+    separate batch) would silently resume a long-abandoned one instead of
+    starting fresh. Uploads made to a resumed session were never lost in the
+    first place (each photo is written to disk and committed to the DB the
+    instant it's picked, before this lookup is even involved) - this just
+    finds the right session_id to land back on, so the existing photos and
+    consignment logs are visible again and Submit can still finalize them."""
+    conn = get_conn()
+    cutoff = (
+        datetime.now(timezone.utc).astimezone() - timedelta(hours=SESSION_RESUME_WINDOW_HOURS)
+    ).isoformat(timespec="seconds")
+    return conn.execute(
+        """SELECT * FROM sessions
+           WHERE job_number = ? AND employee_name = ? AND category = ?
+             AND finalized_at IS NULL AND started_at >= ?
+           ORDER BY started_at DESC LIMIT 1""",
+        (job_number, employee_name, category, cutoff),
+    ).fetchone()
 
 
 def add_upload(
@@ -672,4 +753,126 @@ def mark_sheet_error(upload_id, error_text, retry_after_iso):
            WHERE id = ?""",
         (error_text, retry_after_iso, upload_id),
     )
+    conn.commit()
+
+
+# --- Users (login accounts) -----------------------------------------------
+
+def create_user(name, role="standard", pin_hash=None, active=1):
+    """Raises sqlite3.IntegrityError on a case-insensitive name collision -
+    callers (signup/admin-create) check find_user_by_name first, but the
+    UNIQUE index is the real guard against a race between two people signing
+    up with the same name at once (same pattern as find_or_create_consignment).
+
+    `active` doubles as "approved by an admin" - an admin creating a user
+    directly is implicit approval (active=1, the default), but self-signup
+    (see app.py's /login) passes active=0 so the account can't choose a PIN
+    (and therefore can't log in) until an admin approves it from /admin."""
+    conn = get_conn()
+    cur = conn.execute(
+        """INSERT INTO users (name, name_norm, pin_hash, role, active, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (name, name.strip().casefold(), pin_hash, role, int(bool(active)), now_iso()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def delete_user(user_id):
+    """Hard delete - employee_name on uploads/sessions/consignments is a
+    plain denormalized string, not a foreign key to users.id, so removing
+    the account can never orphan or corrupt historical records."""
+    conn = get_conn()
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+
+
+def find_user_by_name(name):
+    conn = get_conn()
+    return conn.execute(
+        "SELECT * FROM users WHERE name_norm = ?", (name.strip().casefold(),)
+    ).fetchone()
+
+
+def get_user(user_id):
+    conn = get_conn()
+    return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def list_users():
+    conn = get_conn()
+    return conn.execute("SELECT * FROM users ORDER BY name COLLATE NOCASE ASC").fetchall()
+
+
+def list_active_user_names():
+    """Powers the login page's name dropdown - active accounts only, so a
+    disabled one doesn't show up as something you can still pick."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT name FROM users WHERE active = 1 ORDER BY name COLLATE NOCASE ASC"
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def set_pin(user_id, pin_hash):
+    """Used both for a brand-new account's first PIN and to complete a
+    post-reset PIN choice - either way this is what clears the NULL that put
+    the account in 'must choose a PIN' state."""
+    conn = get_conn()
+    conn.execute(
+        """UPDATE users SET pin_hash = ?, failed_attempts = 0, locked_at = NULL
+           WHERE id = ?""",
+        (pin_hash, user_id),
+    )
+    conn.commit()
+
+
+def record_failed_login(user_id, max_attempts):
+    """Bumps the failed-attempt counter and locks the account once it
+    reaches max_attempts. The only way out of a lock is an admin PIN reset
+    (reset_pin below) - there's no time-based cooldown, so a lock can't
+    silently clear itself."""
+    conn = get_conn()
+    row = conn.execute("SELECT failed_attempts FROM users WHERE id = ?", (user_id,)).fetchone()
+    if row is None:
+        return
+    attempts = row["failed_attempts"] + 1
+    locked_at = now_iso() if attempts >= max_attempts else None
+    conn.execute(
+        "UPDATE users SET failed_attempts = ?, locked_at = ? WHERE id = ?",
+        (attempts, locked_at, user_id),
+    )
+    conn.commit()
+
+
+def clear_failed_attempts(user_id):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE users SET failed_attempts = 0, locked_at = NULL WHERE id = ?", (user_id,)
+    )
+    conn.commit()
+
+
+def reset_pin(user_id):
+    """Admin action: puts the account back into 'must choose a PIN' state
+    and clears any lockout - the only way a locked account becomes usable
+    again."""
+    conn = get_conn()
+    conn.execute(
+        """UPDATE users SET pin_hash = NULL, failed_attempts = 0, locked_at = NULL
+           WHERE id = ?""",
+        (user_id,),
+    )
+    conn.commit()
+
+
+def set_user_active(user_id, active):
+    conn = get_conn()
+    conn.execute("UPDATE users SET active = ? WHERE id = ?", (int(bool(active)), user_id))
+    conn.commit()
+
+
+def set_user_role(user_id, role):
+    conn = get_conn()
+    conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
     conn.commit()

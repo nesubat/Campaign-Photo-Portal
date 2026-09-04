@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Log In - Campaign Photo Portal</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="job">📷 Campaign Photo Portal</div>
+    </div>
+  </header>
+
+  <main class="card">
+    {% if stage == 'confirm_signup' %}
+    <p class="sub">No account found for "{{ name }}".</p>
+    {% elif stage == 'pending_approval' %}
+    <p class="sub">Thanks, {{ name }}! An admin needs to approve your account before you can set a
+      PIN and log in - check back soon.</p>
+    {% elif stage == 'enter_pin' %}
+    <p class="sub">Hi {{ name }} - enter your 4-digit PIN.</p>
+    {% elif stage == 'choose_pin' %}
+    <p class="sub">Hi {{ name }} - choose a 4-digit PIN. You'll use it to log in from now on.</p>
+    {% endif %}
+
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+    {% if stage == 'name' %}
+    <div class="login-section">
+      <h2>Already a user?</h2>
+      <form method="post" action="/login" class="form">
+        <input type="hidden" name="next" value="{{ next }}">
+        <label for="name">Your Name</label>
+        <select id="name" name="name" required>
+          <option value="" disabled selected>Select your name...</option>
+          {% for n in existing_names %}
+          <option value="{{ n }}">{{ n }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Continue</button>
+      </form>
+    </div>
+
+    <div class="login-section login-section-new">
+      <h2>New user?</h2>
+      <form method="post" action="/login" class="form">
+        <input type="hidden" name="next" value="{{ next }}">
+        <input type="hidden" name="action" value="signup">
+        <label for="new_name">Your First Name</label>
+        <input id="new_name" name="name" type="text" autocomplete="off" required placeholder="e.g. Tom">
+        <button type="submit">Sign Up</button>
+      </form>
+    </div>
+
+    {% elif stage == 'pending_approval' %}
+    <a href="/login" class="link-btn">Back to login</a>
+    {% else %}
+    <form method="post" action="/login" class="form">
+      <input type="hidden" name="next" value="{{ next }}">
+
+      {% if stage == 'confirm_signup' %}
+      <input type="hidden" name="name" value="{{ name }}">
+      <input type="hidden" name="action" value="signup">
+      <button type="submit">Create account for "{{ name }}"</button>
+      <a href="/login" class="link-btn">Try a different name</a>
+
+      {% elif stage == 'enter_pin' %}
+      <input type="hidden" name="name" value="{{ name }}">
+      <label for="pin">PIN</label>
+      <input id="pin" name="pin" type="password" inputmode="numeric" pattern="\d{4}"
+             maxlength="4" autocomplete="off" required autofocus>
+      <button type="submit">Log In</button>
+      <a href="/login" class="link-btn">Not {{ name }}?</a>
+
+      {% elif stage == 'choose_pin' %}
+      <input type="hidden" name="name" value="{{ name }}">
+      <label for="pin">New PIN</label>
+      <input id="pin" name="pin" type="password" inputmode="numeric" pattern="\d{4}"
+             maxlength="4" autocomplete="off" required autofocus>
+      <label for="pin_confirm">Confirm PIN</label>
+      <input id="pin_confirm" name="pin_confirm" type="password" inputmode="numeric"
+             pattern="\d{4}" maxlength="4" autocomplete="off" required>
+      <button type="submit">Save PIN</button>
+      {% endif %}
+    </form>
+    {% endif %}
+  </main>
+</body>
+</html>

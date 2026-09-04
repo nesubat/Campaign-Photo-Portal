@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Admin - Campaign Photo Portal</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="home-link" title="Back to main page">🏠</a>
+      <div>
+        <div class="job">Admin</div>
+        <div class="who-sub">User management</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      {% include "_user_menu.html" %}
+    </div>
+  </header>
+
+  <div class="admin-body">
+    <section class="admin-card">
+      <h2>Add a user</h2>
+      {% with messages = get_flashed_messages() %}
+      {% if messages %}<p class="error">{{ messages[0] }}</p>{% endif %}
+      {% endwith %}
+      <form method="post" action="/admin/users" class="form">
+        <label for="new_name">First name</label>
+        <input id="new_name" name="name" type="text" placeholder="e.g. Tom" autocomplete="off" required>
+
+        <label for="new_role">Role</label>
+        <select id="new_role" name="role">
+          <option value="standard" selected>Standard</option>
+          <option value="admin">Admin</option>
+        </select>
+
+        <button type="submit" class="btn primary full">Add User</button>
+      </form>
+    </section>
+
+    <section class="admin-card">
+      <h2>Users</h2>
+      <div class="user-list">
+        {% for u in users %}
+        <div class="user-row">
+          <div class="user-row-info">
+            <div class="user-row-name">{{ u['name'] }}</div>
+            <div class="user-row-badges">
+              <span class="badge {{ 'badge-admin' if u['role'] == 'admin' }}">{{ u['role'] }}</span>
+              {% if not u['active'] %}<span class="badge badge-warn">pending approval</span>
+              {% elif u['locked_at'] %}<span class="badge badge-warn">locked</span>
+              {% elif u['pin_hash'] is none %}<span class="badge">needs PIN</span>
+              {% else %}<span class="badge badge-ok">active</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="user-row-actions">
+            {% if not u['active'] %}
+            <form method="post" action="/admin/users/{{ u['id'] }}/approve" class="inline-form">
+              <button type="submit" class="btn primary small">Approve</button>
+            </form>
+            {% else %}
+            <form method="post" action="/admin/users/{{ u['id'] }}/reset-pin" class="inline-form">
+              <button type="submit" class="btn secondary small"
+                      title="Clears their PIN - they'll choose a new one on next login">Reset PIN</button>
+            </form>
+            <form method="post" action="/admin/users/{{ u['id'] }}/role" class="inline-form">
+              <button type="submit" class="btn secondary small">
+                {{ 'Make standard' if u['role'] == 'admin' else 'Make admin' }}
+              </button>
+            </form>
+            {% endif %}
+            <form method="post" action="/admin/users/{{ u['id'] }}/delete" class="inline-form"
+                  onsubmit="return confirm('Permanently delete this account? This cannot be undone.');">
+              <button type="submit" class="btn danger small">Delete account</button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <p class="sub">No users yet.</p>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+  <script src="/static/topbar.js"></script>
+</body>
+</html>

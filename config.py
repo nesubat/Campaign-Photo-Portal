@@ -6,15 +6,42 @@ import json
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")  # DRIVE_WEBAPP_URL / DRIVE_SHARED_SECRET - see .env.example
+ENV_PATH = BASE_DIR / ".env"
+load_dotenv(ENV_PATH)  # DRIVE_WEBAPP_URL / DRIVE_SHARED_SECRET - see .env.example
 
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = BASE_DIR / "uploads"
 DB_PATH = DATA_DIR / "portal.db"
-EMPLOYEES_FILE = DATA_DIR / "employees.json"
+EMPLOYEES_FILE = DATA_DIR / "employees.json"  # legacy name list - one-time imported into `users`, see db._migrate
+
+# Flask session signing key - required for login to work. Set a long random
+# string in .env; sessions become invalid (everyone logged out) if this changes.
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+
+# How long a login lasts before a phone needs to log in again. Long by design
+# (a year) - these are shared/shift phones, not personal devices, so "stay
+# logged in until someone taps Log out" is the expected behavior, not a
+# security compromise. See auth.login_user, which marks the session permanent
+# so this actually takes effect (a non-permanent Flask session cookie has no
+# expiry at all and gets dropped the moment the phone's browser process ends,
+# which is exactly the "logged out again after reopening the app" symptom
+# this replaces).
+SESSION_LIFETIME_DAYS = 365
+
+# First Admin account, created on startup if it doesn't already exist yet -
+# see auth.ensure_bootstrap_admin. ADMIN_PIN doubles as a live mirror of that
+# account's current PIN (see update_admin_pin_in_env, called from
+# auth.set_pin_and_sync whenever the Admin account's PIN changes) - a
+# deliberate "break glass" recovery path in plaintext here, since there's no
+# other admin around to reset the sole Admin account if you're the only one.
+ADMIN_NAME = os.environ.get("ADMIN_NAME", "").strip()
+ADMIN_PIN = os.environ.get("ADMIN_PIN", "").strip()
+
+# Failed PIN attempts before an account locks (only an admin PIN reset clears it).
+LOGIN_MAX_ATTEMPTS = 5
 
 # Thumbnail size for the on-page gallery grid (full-res original is always kept).
 THUMB_MAX_PX = 480
@@ -65,6 +92,14 @@ CATEGORIES = {
 # separate, per-session choice (sessions.keep_logs).
 CONSIGNMENT_LOGGING_CATEGORY = "packing"
 
+# How long (hours) a not-yet-submitted session stays auto-resumable - see
+# db.find_open_session. Re-entering the same job number + category within
+# this window (browser back button, app/server restart, phone locked and
+# reopened) lands back on the same in-progress batch instead of starting a
+# new one; past it, the old session is treated as abandoned and a fresh one
+# starts instead (most likely a genuinely separate batch, e.g. the next day).
+SESSION_RESUME_WINDOW_HOURS = 24
+
 # How many days after a photo is confirmed synced to Drive before its local copy
 # (full-res + thumbnail) is deleted to free disk space.
 LOCAL_CLEANUP_AFTER_DAYS = 2
@@ -84,19 +119,12 @@ PORT = 5000
 WAITRESS_THREADS = 16
 
 
-def load_employees():
-    """Preset name list for the dropdown. Edit data/employees.json to change it."""
-    if not EMPLOYEES_FILE.exists():
-        return []
-    with open(EMPLOYEES_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_employees(names):
-    EMPLOYEES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(EMPLOYEES_FILE, "w", encoding="utf-8") as f:
-        json.dump(names, f, indent=2)
-        f.write("\n")
+def update_admin_pin_in_env(new_pin):
+    """Keeps .env's ADMIN_PIN mirroring the Admin account's live PIN. Only
+    called for the ADMIN_NAME account (see auth.set_pin_and_sync) - other
+    admins stay hash-only/reset-by-another-admin, same as standard users."""
+    if ENV_PATH.exists():
+        set_key(str(ENV_PATH), "ADMIN_PIN", new_pin, quote_mode="never")
 
 
 def load_drive_config():

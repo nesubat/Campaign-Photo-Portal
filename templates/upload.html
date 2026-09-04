@@ -12,10 +12,13 @@
       <a href="/" class="home-link" title="Back to main page">🏠</a>
       <div>
         <div class="job">{{ session['job_number'] }}</div>
-        <div class="who">{{ session['employee_name'] }} · {{ category_label }}</div>
+        <div class="who-sub">{{ category_label }}</div>
       </div>
     </div>
-    <div id="counter" class="counter">{{ photos|length }} photo(s)</div>
+    <div class="topbar-right">
+      <div id="counter" class="counter">{{ photos|length }} photo(s)</div>
+      {% include "_user_menu.html" %}
+    </div>
   </header>
 
   {% if resumed_count %}
@@ -106,5 +109,6 @@
     window.CONSIGNMENT_VALUES = JSON.parse(pageData.consignmentValues);
   </script>
   <script src="/static/upload.js"></script>
+  <script src="/static/topbar.js"></script>
 </body>
 </html>

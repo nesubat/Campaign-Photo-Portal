@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Change PIN - Campaign Photo Portal</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="home-link" title="Back to main page">🏠</a>
+      <div class="job">Change PIN</div>
+    </div>
+    <div class="topbar-right">
+      {% include "_user_menu.html" %}
+    </div>
+  </header>
+
+  <main class="card">
+    <p class="sub">Choose a new 4-digit PIN.</p>
+
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+    <form method="post" action="/change-pin" class="form">
+      <label for="pin">New PIN</label>
+      <input id="pin" name="pin" type="password" inputmode="numeric" pattern="\d{4}"
+             maxlength="4" autocomplete="off" required autofocus>
+
+      <label for="pin_confirm">Confirm PIN</label>
+      <input id="pin_confirm" name="pin_confirm" type="password" inputmode="numeric"
+             pattern="\d{4}" maxlength="4" autocomplete="off" required>
+
+      <button type="submit">Save PIN</button>
+    </form>
+  </main>
+  <script src="/static/topbar.js"></script>
+</body>
+</html>

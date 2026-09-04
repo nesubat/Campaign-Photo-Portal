@@ -7,9 +7,17 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="job">📷 Campaign Photo Portal</div>
+    </div>
+    <div class="topbar-right">
+      {% include "_user_menu.html" %}
+    </div>
+  </header>
+
   <main class="card">
-    <h1>📷 Campaign Photo Portal</h1>
-    <p class="sub">Enter the Job Number and your name to start uploading photos.</p>
+    <p class="sub">Enter the Job Number to start uploading photos.</p>
 
     {% if submitted is not none %}
     <p class="banner done">✅ Batch submitted successfully for <br>
@@ -22,19 +30,7 @@
       <label for="job_number">Job Number</label>
       <input id="job_number" name="job_number" type="text" inputmode="text"
              autocomplete="off" autocapitalize="characters" required
-             placeholder="e.g. J457008">
-
-      <label for="employee_name">Your Name</label>
-      <select id="employee_name" name="employee_name" required onchange="toggleOther(this)">
-        <option value="" disabled selected>Select your name...</option>
-        {% for name in employees %}
-        <option value="{{ name }}">{{ name }}</option>
-        {% endfor %}
-        <option value="__other__">Other (type my name)</option>
-      </select>
-      <input id="employee_name_other" name="employee_name_other" type="text"
-             placeholder="Type your name" class="hidden" autocomplete="off">
-      <button type="button" id="manageNamesBtn" class="link-btn">Manage names</button>
+             pattern="[Jj][0-9]{6}" maxlength="7" placeholder="e.g. J457008">
 
       <label for="category">Photo Type</label>
       <select id="category" name="category" required onchange="toggleKeepLogs(this)">
@@ -60,40 +56,27 @@
     <p>Starting upload session...</p>
   </div>
 
-  <dialog id="employeesDialog" class="section-dialog">
-    <div class="section-dialog-header">
-      <h2>Manage Names</h2>
-      <button type="button" id="employeesDialogClose" class="dialog-close" aria-label="Close">×</button>
-    </div>
-    <div class="section-dialog-body">
-      <div id="employeesList" class="chips"></div>
-    </div>
-  </dialog>
-
   <script id="pageData"
-          data-consignment-logging-category='{{ consignment_logging_category|tojson }}'
-          data-employees='{{ employees|tojson }}'></script>
+          data-consignment-logging-category='{{ consignment_logging_category|tojson }}'></script>
   <script>
     var pageData = document.getElementById('pageData').dataset;
     var CONSIGNMENT_LOGGING_CATEGORY = JSON.parse(pageData.consignmentLoggingCategory);
-    var EMPLOYEES = JSON.parse(pageData.employees);
-
-    function toggleOther(sel) {
-      var other = document.getElementById('employee_name_other');
-      if (sel.value === '__other__') {
-        other.classList.remove('hidden');
-        other.required = true;
-        other.focus();
-      } else {
-        other.classList.add('hidden');
-        other.required = false;
-      }
-    }
 
     function toggleKeepLogs(sel) {
       var row = document.getElementById('keepLogsRow');
       row.classList.toggle('hidden', sel.value !== CONSIGNMENT_LOGGING_CATEGORY);
     }
+
+    (function () {
+      var jobInput = document.getElementById('job_number');
+      if (!jobInput) return;
+      jobInput.addEventListener('input', function () { jobInput.setCustomValidity(''); });
+      jobInput.addEventListener('invalid', function () {
+        if (jobInput.validity.patternMismatch) {
+          jobInput.setCustomValidity('Job Number must be "J" followed by exactly 6 digits - e.g. J457008.');
+        }
+      });
+    })();
 
     (function () {
       var form = document.querySelector('form.form');
@@ -108,75 +91,7 @@
         if (btn) btn.disabled = true;
       });
     })();
-
-    (function () {
-      var manageNamesBtn = document.getElementById('manageNamesBtn');
-      var employeesDialog = document.getElementById('employeesDialog');
-      var employeesDialogClose = document.getElementById('employeesDialogClose');
-      var employeesList = document.getElementById('employeesList');
-      var employeeSelect = document.getElementById('employee_name');
-
-      function renderEmployeesList() {
-        employeesList.innerHTML = '';
-        EMPLOYEES.forEach(function (name) {
-          var chip = document.createElement('span');
-          chip.className = 'chip';
-
-          var label = document.createElement('span');
-          label.textContent = name;
-          chip.appendChild(label);
-
-          var removeBtn = document.createElement('button');
-          removeBtn.type = 'button';
-          removeBtn.className = 'chip-remove';
-          removeBtn.textContent = '×';
-          removeBtn.title = 'Remove ' + name;
-          removeBtn.addEventListener('click', function () { removeEmployee(name); });
-          chip.appendChild(removeBtn);
-
-          employeesList.appendChild(chip);
-        });
-      }
-
-      function removeEmployee(name) {
-        if (!confirm('Remove "' + name + '" from the name list?')) return;
-        fetch('/api/employees/remove', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name }),
-        })
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
-            if (!data.ok) throw new Error(data.error || 'Could not remove name.');
-            EMPLOYEES = data.employees;
-            renderEmployeesList();
-            // Also drop it from the actual dropdown so it's reflected immediately.
-            Array.prototype.slice.call(employeeSelect.querySelectorAll('option')).forEach(function (opt) {
-              if (opt.value === name) opt.remove();
-            });
-          })
-          .catch(function (err) { alert(err.message); });
-      }
-
-      if (manageNamesBtn) {
-        manageNamesBtn.addEventListener('click', function () {
-          renderEmployeesList();
-          if (typeof employeesDialog.showModal === 'function') {
-            employeesDialog.showModal();
-          } else {
-            employeesDialog.setAttribute('open', '');
-          }
-        });
-      }
-      if (employeesDialogClose) {
-        employeesDialogClose.addEventListener('click', function () { employeesDialog.close(); });
-      }
-      if (employeesDialog) {
-        employeesDialog.addEventListener('click', function (e) {
-          if (e.target === employeesDialog) employeesDialog.close();
-        });
-      }
-    })();
   </script>
+  <script src="/static/topbar.js"></script>
 </body>
 </html>

@@ -15,7 +15,10 @@
         <div class="who">Supervisor view - read only</div>
       </div>
     </div>
-    <div class="counter">{{ photos|length }} photo(s)</div>
+    <div class="topbar-right">
+      <div class="counter">{{ photos|length }} photo(s)</div>
+      {% include "_user_menu.html" %}
+    </div>
   </header>
 
   <div class="gallery">
@@ -36,5 +39,6 @@
     <p class="sub">No photos uploaded for this job yet.</p>
     {% endfor %}
   </div>
+  <script src="/static/topbar.js"></script>
 </body>
 </html>

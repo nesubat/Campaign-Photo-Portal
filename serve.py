@@ -25,6 +25,7 @@ import socket
 import subprocess
 import time
 
+import auth
 import db
 import drive_sync
 import local_cleanup
@@ -133,6 +134,7 @@ def _kill_stale_port_holders(port):
 if __name__ == "__main__":
     _kill_stale_port_holders(PORT)
     db.init_db()
+    auth.ensure_bootstrap_admin()
     if load_drive_config():
         print("[startup] Drive sync configured - background relay starting.")
     else:
