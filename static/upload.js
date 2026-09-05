@@ -193,7 +193,7 @@
       if (section.itemIds.length) {
         var sub = document.createElement('div');
         sub.className = 'consignment-card-subheader';
-        sub.textContent = 'Item ID(s): ' + section.itemIds.join(', ');
+        sub.textContent = 'Item ID(s): ' + section.itemIds.map(function (item) { return item.label; }).join(', ');
         card.appendChild(sub);
       }
 

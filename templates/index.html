@@ -28,9 +28,12 @@
 
     <form method="post" action="/start" class="form">
       <label for="job_number">Job Number</label>
-      <input id="job_number" name="job_number" type="text" inputmode="text"
-             autocomplete="off" autocapitalize="characters" required
-             pattern="[Jj][0-9]{6}" maxlength="7" placeholder="e.g. J457008">
+      <div class="field-wrap">
+        <input id="job_number" name="job_number" type="text" inputmode="text"
+               autocomplete="off" autocapitalize="characters" required
+               pattern="[Jj][0-9]{6}" maxlength="7" placeholder="e.g. J457008">
+        <div id="jobNumberBubble" class="field-bubble hidden" role="alert"></div>
+      </div>
 
       <label for="category">Photo Type</label>
       <select id="category" name="category" required onchange="toggleKeepLogs(this)">
@@ -69,13 +72,85 @@
 
     (function () {
       var jobInput = document.getElementById('job_number');
+      var bubble = document.getElementById('jobNumberBubble');
       if (!jobInput) return;
-      jobInput.addEventListener('input', function () { jobInput.setCustomValidity(''); });
-      jobInput.addEventListener('invalid', function () {
-        if (jobInput.validity.patternMismatch) {
-          jobInput.setCustomValidity('Job Number must be "J" followed by exactly 6 digits - e.g. J457008.');
+      var touched = false; // don't flag anything before the user has actually tapped in
+      var shakeTimer = null;
+      var MESSAGE = 'Job Number must be "J" followed by exactly 6 digits - e.g. J457008.';
+      // A value only becomes a definite error the moment it can no longer lead to a
+      // valid "J" + 6 digits, e.g. a wrong first character or a non-digit after the
+      // J - not simply "not finished yet", so typing a correct number never shakes
+      // partway through.
+      var VALID_SO_FAR = /^([Jj][0-9]{0,6})?$/;
+      var FULL_VALID = /^[Jj][0-9]{6}$/;
+
+      function clearInvalid() {
+        jobInput.classList.remove('field-invalid');
+        if (bubble) bubble.classList.add('hidden');
+        if (shakeTimer) { clearTimeout(shakeTimer); shakeTimer = null; }
+      }
+
+      function flagInvalid() {
+        jobInput.classList.remove('field-invalid');
+        void jobInput.offsetWidth; // restart the shake animation even if already mid-shake
+        jobInput.classList.add('field-invalid');
+        if (bubble) {
+          bubble.textContent = MESSAGE;
+          bubble.classList.remove('hidden');
+        }
+        if (shakeTimer) clearTimeout(shakeTimer);
+        shakeTimer = setTimeout(clearInvalid, 4000);
+      }
+
+      jobInput.addEventListener('focus', function () { touched = true; });
+
+      jobInput.addEventListener('input', function () {
+        if (!touched || !jobInput.value) return;
+        if (VALID_SO_FAR.test(jobInput.value)) {
+          clearInvalid(); // fixed it - drop the shake/bubble right away, don't wait out the timer
+        } else {
+          flagInvalid();
         }
       });
+
+      // Typing "on track" so far (e.g. "J4570" - still might become valid)
+      // never shakes while it's still being typed - but if the user leaves
+      // the field with it in that state, it's now an abandoned, incomplete
+      // number, not "not finished yet". An empty field is a different case
+      // (they just haven't started) and stays quiet until they try to submit.
+      jobInput.addEventListener('blur', function () {
+        if (!touched || !jobInput.value) return;
+        if (!FULL_VALID.test(jobInput.value)) flagInvalid();
+      });
+
+      // Native validation still runs on submit (required/pattern stay as a
+      // fallback) - suppress its own bubble and show the same shake instead.
+      jobInput.addEventListener('invalid', function (e) {
+        e.preventDefault();
+        flagInvalid();
+      });
+
+      // Safety net for mobile browsers that don't reliably block submission
+      // on their own just because a field is invalid (confirmed for iOS
+      // Safari and some Android browsers) - checks the actual value directly
+      // rather than trusting that alone. Registered before the overlay's own
+      // submit listener further down this file, so - same element, so
+      // registration order decides - this one runs first and, via
+      // stopImmediatePropagation, stops that one from firing too when the
+      // number's genuinely invalid (otherwise the overlay would show
+      // "Starting..." over a submission that never actually happened).
+      var form = jobInput.form;
+      if (form) {
+        form.addEventListener('submit', function (e) {
+          if (!FULL_VALID.test(jobInput.value)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            touched = true;
+            flagInvalid();
+            jobInput.focus();
+          }
+        });
+      }
     })();
 
     (function () {
