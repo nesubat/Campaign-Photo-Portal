@@ -26,6 +26,32 @@
 
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, msg in messages %}
+        {% if category == 'success' %}<p class="banner done">{{ msg }}</p>
+        {% else %}<p class="error">{{ msg }}</p>{% endif %}
+      {% endfor %}
+    {% endwith %}
+
+    {% if existing_session %}
+    <div class="banner warn">
+      ⚠️ You have an unfinished session for <strong>{{ existing_session['job_number'] }}</strong> /
+      {{ categories.get(existing_session['category'], existing_session['category']) }}
+      (consignment logs: {{ 'On' if existing_session['keep_logs'] else 'Off' }}) -
+      {{ existing_photo_count }} photo(s).
+      <div class="existing-session-actions">
+        <a href="/session/{{ existing_session['id'] }}" class="btn primary small">Continue it</a>
+        <form method="post" action="/start" class="inline-form">
+          <input type="hidden" name="job_number" value="{{ pending_job_number }}">
+          <input type="hidden" name="category" value="{{ pending_category }}">
+          {% if pending_keep_logs %}<input type="hidden" name="keep_logs" value="on">{% endif %}
+          <input type="hidden" name="force_new" value="1">
+          <button type="submit" class="btn secondary small">Start a new one instead</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
     <form method="post" action="/start" class="form">
       <label for="job_number">Job Number</label>
       <div class="field-wrap">
@@ -52,6 +78,35 @@
 
       <button type="submit">Start Uploading</button>
     </form>
+
+    {% if open_sessions %}
+    <div class="active-sessions">
+      <h2>Active Sessions</h2>
+      <div class="session-list">
+        {% for s in open_sessions %}
+        <div class="session-row">
+          <div class="session-row-info">
+            <div class="session-row-name">{{ s['job_number'] }} - {{ categories.get(s['category'], s['category']) }}</div>
+            <div class="session-row-badges">
+              <span class="badge">{{ s['photo_count'] }} photo(s)</span>
+              {% if s['category'] == consignment_logging_category %}
+              <span class="badge {{ 'badge-ok' if s['keep_logs'] else '' }}">logs {{ 'on' if s['keep_logs'] else 'off' }}</span>
+              {% endif %}
+              <span class="badge">started {{ s['started_at'] }}</span>
+            </div>
+          </div>
+          <div class="session-row-actions">
+            <a href="/session/{{ s['id'] }}" class="btn primary small">Continue</a>
+            <form method="post" action="/session/{{ s['id'] }}/delete" class="inline-form"
+                  onsubmit="return confirm('Delete this session and all its photos? This cannot be undone.');">
+              <button type="submit" class="btn danger small">Delete</button>
+            </form>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
   </main>
 
   <div id="startOverlay" class="page-overlay hidden" aria-live="polite">

@@ -122,16 +122,50 @@ h1, h2, .job, .btn, .consignment-card-header, .user-row-name, .badge, .user-menu
 }
 .topbar .job { font-weight: 600; font-size: 18px; }
 .topbar .who, .topbar .who-sub { font-size: 12px; opacity: 0.75; }
+.job-edit-wrap { display: flex; align-items: center; gap: 6px; }
+.job-edit-btn {
+  background: none; border: none; color: #fff; opacity: 0.75; font-size: 14px;
+  cursor: pointer; padding: 2px 4px; line-height: 1;
+}
+.job-edit-btn:hover { opacity: 1; }
+.job-edit-form {
+  display: flex; gap: 8px; padding: 10px 16px; background: var(--surface-muted);
+  align-items: center; flex-wrap: wrap;
+}
+.job-edit-form input {
+  flex: 1; min-width: 120px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+  font-size: 15px; font-family: inherit;
+}
 .home-link {
   font-size: 20px; text-decoration: none; opacity: 0.9; line-height: 1; color: #fff;
 }
 .home-link:hover { opacity: 1; }
 .counter { font-size: 13px; background: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 20px; }
+.topbar-delete-btn {
+  background: none; border: none; color: #fff; opacity: 0.75; font-size: 16px;
+  cursor: pointer; padding: 4px; line-height: 1;
+}
+.topbar-delete-btn:hover { opacity: 1; }
 
 .banner {
   margin: 10px 16px; padding: 12px 14px; border-radius: 10px; font-size: 14px;
 }
 .banner.done { background: var(--good-bg); color: var(--good); }
+.banner.warn { background: var(--warn-bg); color: var(--warn); margin: 0 0 16px; }
+.existing-session-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+.active-sessions { margin-top: 20px; }
+.active-sessions h2 { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
+.session-list { display: flex; flex-direction: column; gap: 10px; }
+.session-row {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  padding: 14px; border-radius: 12px; background: var(--surface-muted); flex-wrap: wrap;
+}
+.session-row-info { display: flex; flex-direction: column; gap: 6px; }
+.session-row-name { font-size: 15px; font-weight: 600; }
+.session-row-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.session-row-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.session-row-actions .btn { padding: 10px 14px; font-size: 13px; white-space: nowrap; }
 
 .capture-bar {
   display: flex; gap: 10px; padding: 14px 16px;
@@ -139,7 +173,7 @@ h1, h2, .job, .btn, .consignment-card-header, .user-row-name, .badge, .user-menu
 .btn {
   flex: 1; text-align: center; padding: 16px 10px; border-radius: 12px;
   font-weight: 600; font-size: 15px; cursor: pointer; user-select: none;
-  border: none;
+  border: none; text-decoration: none; display: inline-block;
 }
 .btn.primary { background: var(--ink); color: #fff; }
 .btn.secondary { background: var(--surface-muted); color: var(--ink); }
@@ -277,7 +311,7 @@ h1, h2, .job, .btn, .consignment-card-header, .user-row-name, .badge, .user-menu
 }
 
 .submit-bar {
-  position: fixed; bottom: 0; left: 0; right: 0; padding: 12px 16px;
+  position: fixed; bottom: 0; left: 0; right: 0; padding: 12px 16px; display: flex; gap: 10px;
   background: var(--surface); box-shadow: 0 -2px 10px rgba(35,31,32,0.08);
 }
 

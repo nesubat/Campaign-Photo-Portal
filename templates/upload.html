@@ -11,15 +11,42 @@
     <div class="topbar-left">
       <a href="/" class="home-link" title="Back to main page">🏠</a>
       <div>
-        <div class="job">{{ session['job_number'] }}</div>
+        <div class="job-edit-wrap">
+          <div class="job" id="jobDisplay">{{ session['job_number'] }}</div>
+          {% if not finalized %}
+          <button type="button" class="job-edit-btn" id="jobEditBtn" title="Edit job number">✏️</button>
+          {% endif %}
+        </div>
         <div class="who-sub">{{ category_label }}</div>
       </div>
     </div>
     <div class="topbar-right">
       <div id="counter" class="counter">{{ photos|length }} photo(s)</div>
+      {% if not finalized %}
+      <form method="post" action="/session/{{ session['id'] }}/delete" class="inline-form"
+            onsubmit="return confirm('Delete this entire session and all its photos? This cannot be undone.');">
+        <button type="submit" class="topbar-delete-btn" title="Delete this session">🗑️</button>
+      </form>
+      {% endif %}
       {% include "_user_menu.html" %}
     </div>
   </header>
+
+  {% if not finalized %}
+  <form method="post" action="/session/{{ session['id'] }}/edit-job-number" id="jobEditForm" class="job-edit-form hidden">
+    <input type="text" name="job_number" id="jobEditInput" value="{{ session['job_number'] }}"
+           pattern="[Jj][0-9]{6}" maxlength="7" autocomplete="off" autocapitalize="characters" required>
+    <button type="submit" class="btn primary small">Save</button>
+    <button type="button" class="btn secondary small" id="jobEditCancel">Cancel</button>
+  </form>
+  {% endif %}
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, msg in messages %}
+      {% if category == 'success' %}<div class="banner done">{{ msg }}</div>
+      {% else %}<div class="banner warn">{{ msg }}</div>{% endif %}
+    {% endfor %}
+  {% endwith %}
 
   {% if resumed_count %}
   <div class="banner done">📥 Resumed {{ resumed_count }} existing consignment(s) for this job from Google Drive.</div>
@@ -88,7 +115,8 @@
 
   {% if not finalized %}
   <div class="submit-bar">
-    <button id="submitBtn" class="btn primary full">Submit Batch</button>
+    <a href="/" class="btn secondary">Cancel</a>
+    <button id="submitBtn" class="btn primary">Submit Batch</button>
   </div>
   {% endif %}
 
@@ -107,6 +135,22 @@
     window.INITIAL_SECTIONS = JSON.parse(pageData.initialSections);
     window.FINALIZED = JSON.parse(pageData.finalized);
     window.CONSIGNMENT_VALUES = JSON.parse(pageData.consignmentValues);
+  </script>
+  <script>
+    (function () {
+      var editBtn = document.getElementById('jobEditBtn');
+      var cancelBtn = document.getElementById('jobEditCancel');
+      var form = document.getElementById('jobEditForm');
+      if (!editBtn || !form) return;
+      editBtn.addEventListener('click', function () {
+        form.classList.remove('hidden');
+        var input = document.getElementById('jobEditInput');
+        if (input) { input.focus(); input.select(); }
+      });
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', function () { form.classList.add('hidden'); });
+      }
+    })();
   </script>
   <script src="/static/upload.js"></script>
   <script src="/static/topbar.js"></script>

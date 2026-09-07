@@ -87,8 +87,30 @@ def thumb_dir(job_number, category):
 def _render_index(**extra):
     return render_template(
         "index.html", categories=CATEGORIES,
-        consignment_logging_category=CONSIGNMENT_LOGGING_CATEGORY, **extra
+        consignment_logging_category=CONSIGNMENT_LOGGING_CATEGORY,
+        open_sessions=db.list_open_sessions(g.user["name"]),
+        **extra
     )
+
+
+def _cleanup_empty_job_dir(job_number, category):
+    """Best-effort - removes the thumbs folder and then the category folder
+    for a job if a delete/rename just emptied them out. Never raises: a
+    folder that isn't actually empty (still has another session's photos)
+    just fails its rmdir and is left alone, which is the correct outcome."""
+    thumbs = job_dir(job_number, category) / "thumbs"
+    try:
+        thumbs.rmdir()
+    except OSError:
+        pass
+    try:
+        job_dir(job_number, category).rmdir()
+    except OSError:
+        pass
+    try:
+        (UPLOAD_DIR / job_number).rmdir()  # only succeeds if no other category folder is left either
+    except OSError:
+        pass
 
 
 @app.route("/")
@@ -278,9 +300,19 @@ def start():
     job_dir(job_number, category).mkdir(parents=True, exist_ok=True)
     db.ensure_job(job_number)
 
-    existing = db.find_open_session(job_number, employee_name, category)
+    force_new = request.form.get("force_new") == "1"
+    existing = None if force_new else db.find_open_session(job_number, employee_name, category)
     if existing:
-        return redirect(f"/session/{existing['id']}")
+        # Don't silently resume - the keep_logs choice on THIS submission would
+        # otherwise be dropped on the floor in favor of whatever the old session
+        # was created with. Let the user pick instead of guessing for them.
+        return _render_index(
+            existing_session=existing,
+            existing_photo_count=len(db.uploads_for_session(existing["id"])),
+            pending_job_number=job_number,
+            pending_category=category,
+            pending_keep_logs=request.form.get("keep_logs") == "on",
+        )
 
     keep_logs = category == CONSIGNMENT_LOGGING_CATEGORY and request.form.get("keep_logs") == "on"
 
@@ -395,6 +427,93 @@ def session_page(session_id):
         consignment_values=consignment_values,
         resumed_count=request.args.get("resumed", type=int),
     )
+
+
+def _own_session_or_403(sess):
+    if sess["employee_name"] != g.user["name"] and g.user["role"] != "admin":
+        abort(403)
+
+
+@app.route("/session/<session_id>/delete", methods=["POST"])
+@auth.login_required
+def delete_session(session_id):
+    sess = db.get_session(session_id)
+    if not sess:
+        abort(404)
+    _own_session_or_403(sess)
+    if sess["finalized_at"]:
+        flash("This batch was already submitted - it can't be deleted.")
+        return redirect("/")
+
+    job_number, category = sess["job_number"], sess["category"]
+    touched_consignments = set()
+    for u in db.uploads_for_session(session_id):
+        (job_dir(job_number, category) / u["filename"]).unlink(missing_ok=True)
+        (thumb_dir(job_number, category) / u["thumb_filename"]).unlink(missing_ok=True)
+        if u["consignment_id"]:
+            touched_consignments.add(u["consignment_id"])
+        db.delete_upload(u["id"])
+    for consignment_id in touched_consignments:
+        db.delete_consignment_if_orphaned(consignment_id)
+    db.delete_session(session_id)
+    _cleanup_empty_job_dir(job_number, category)
+
+    flash(f"Session for {job_number} deleted.", "success")
+    return redirect("/")
+
+
+@app.route("/session/<session_id>/edit-job-number", methods=["POST"])
+@auth.login_required
+def edit_session_job_number(session_id):
+    sess = db.get_session(session_id)
+    if not sess:
+        abort(404)
+    _own_session_or_403(sess)
+    if sess["finalized_at"]:
+        flash("This batch was already submitted - its job number can't be changed.")
+        return redirect(f"/session/{session_id}")
+
+    new_job_number = sanitize_for_filename(request.form.get("job_number", ""))
+    if not JOB_NUMBER_RE.match(new_job_number):
+        flash('Job Number must be "J" followed by exactly 6 digits - e.g. J457008.')
+        return redirect(f"/session/{session_id}")
+
+    old_job_number, category = sess["job_number"], sess["category"]
+    if new_job_number == old_job_number:
+        return redirect(f"/session/{session_id}")
+
+    uploads = db.uploads_for_session(session_id)
+    job_dir(new_job_number, category).mkdir(parents=True, exist_ok=True)
+    thumb_dir(new_job_number, category)  # creates the thumbs subfolder too
+
+    moved = []
+    try:
+        for u in uploads:
+            for filename, src_dir, dst_dir in (
+                (u["filename"], job_dir(old_job_number, category), job_dir(new_job_number, category)),
+                (u["thumb_filename"], thumb_dir(old_job_number, category), thumb_dir(new_job_number, category)),
+            ):
+                src, dst = src_dir / filename, dst_dir / filename
+                if not src.exists():
+                    continue
+                if dst.exists():
+                    raise FileExistsError(f"{dst} already exists")
+                src.rename(dst)
+                moved.append((src, dst))
+    except OSError as exc:
+        for src, dst in reversed(moved):  # best-effort rollback so disk matches the DB again
+            try:
+                dst.rename(src)
+            except OSError:
+                pass
+        flash(f"Could not move this job's photos to {new_job_number}: {exc}")
+        return redirect(f"/session/{session_id}")
+
+    db.rename_session_job(session_id, new_job_number, category)
+    _cleanup_empty_job_dir(old_job_number, category)
+
+    flash(f"Job number updated to {new_job_number}.", "success")
+    return redirect(f"/session/{session_id}")
 
 
 def _consignment_json(row, existing):

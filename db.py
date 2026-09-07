@@ -241,6 +241,28 @@ def find_open_session(job_number, employee_name, category):
     ).fetchone()
 
 
+def list_open_sessions(employee_name):
+    """Every not-yet-finalized session for this employee, regardless of how
+    long ago it started (unlike find_open_session's resume window) - this
+    powers the Active Sessions list on the job-number page, which exists
+    precisely so a long-abandoned or duplicate session doesn't just vanish
+    unresumable - it can still be reopened or deleted from here."""
+    conn = get_conn()
+    return conn.execute(
+        """SELECT s.*, (SELECT COUNT(*) FROM uploads u WHERE u.session_id = s.id) AS photo_count
+           FROM sessions s
+           WHERE s.employee_name = ? AND s.finalized_at IS NULL
+           ORDER BY s.started_at DESC""",
+        (employee_name,),
+    ).fetchall()
+
+
+def delete_session(session_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+    conn.commit()
+
+
 def add_upload(
     session_id, job_number, employee_name, category, filename, thumb_filename, consignment_id=None
 ):
@@ -647,6 +669,84 @@ def decrement_photo_count(consignment_id):
            WHERE id = ?""",
         (now_iso(), consignment_id),
     )
+    conn.commit()
+
+
+def delete_consignment_if_orphaned(consignment_id):
+    """Called after a session's uploads referencing this consignment are
+    gone - removes the consignment record too if nothing else still points
+    at it. A consignment shared with another session (rare - the same
+    key scanned under the same job+category from two sessions) survives
+    untouched."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM uploads WHERE consignment_id = ? LIMIT 1", (consignment_id,)
+    ).fetchone()
+    if row is None:
+        conn.execute("DELETE FROM consignments WHERE id = ?", (consignment_id,))
+        conn.commit()
+
+
+def rename_session_job(session_id, new_job_number, category):
+    """Moves one session to a corrected job number - called only after the
+    physical files have already been moved on disk (see app.py), and only
+    for a session confirmed unfinalized (Drive/Sheets never referenced the
+    old job number yet, so nothing there needs correcting).
+
+    For each consignment this session touched: if the corrected job number
+    has no record for that same key yet, the consignment just moves with it
+    (the common case - the wrong job number was wrong for everyone). If one
+    already exists there (someone logged the same consignment/store under
+    the correct number already), this session's contribution is merged into
+    it instead - the unique index on (job_number, category, key_norm)
+    forbids two rows for the same key, and ALL uploads pointing at the old
+    consignment (not just this session's) are repointed at the surviving
+    one, since the old row is being deleted."""
+    conn = get_conn()
+    ensure_job(new_job_number)
+
+    consignment_ids = [
+        row["consignment_id"] for row in conn.execute(
+            """SELECT DISTINCT consignment_id FROM uploads
+               WHERE session_id = ? AND consignment_id IS NOT NULL""",
+            (session_id,),
+        ).fetchall()
+    ]
+
+    for old_id in consignment_ids:
+        old_row = get_consignment(old_id)
+        if old_row is None:
+            continue
+        target = find_consignment(new_job_number, category, old_row["key_norm"])
+        if target is None:
+            conn.execute(
+                "UPDATE consignments SET job_number = ?, updated_at = ? WHERE id = ?",
+                (new_job_number, now_iso(), old_id),
+            )
+            continue
+
+        conn.execute(
+            "UPDATE uploads SET consignment_id = ? WHERE consignment_id = ?",
+            (target["id"], old_id),
+        )
+        merged_items = split_list(target["item_ids"]) + split_list(old_row["item_ids"])
+        merged_contributors = split_list(target["contributors"])
+        for name in split_list(old_row["contributors"]):
+            if name not in merged_contributors:
+                merged_contributors.append(name)
+        conn.execute(
+            """UPDATE consignments
+               SET item_ids = ?, contributors = ?, photo_count = photo_count + ?, updated_at = ?
+               WHERE id = ?""",
+            (
+                _join_list(merged_items), _join_list(merged_contributors),
+                old_row["photo_count"], now_iso(), target["id"],
+            ),
+        )
+        conn.execute("DELETE FROM consignments WHERE id = ?", (old_id,))
+
+    conn.execute("UPDATE uploads SET job_number = ? WHERE session_id = ?", (new_job_number, session_id))
+    conn.execute("UPDATE sessions SET job_number = ? WHERE id = ?", (new_job_number, session_id))
     conn.commit()
 
 
