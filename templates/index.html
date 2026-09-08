@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#231f20">
   <title>Campaign Photo Portal</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -92,13 +93,12 @@
               {% if s['category'] == consignment_logging_category %}
               <span class="badge {{ 'badge-ok' if s['keep_logs'] else '' }}">logs {{ 'on' if s['keep_logs'] else 'off' }}</span>
               {% endif %}
-              <span class="badge">started {{ s['started_at'] }}</span>
+              <span class="badge">started {{ s['started_at']|started_at }}</span>
             </div>
           </div>
           <div class="session-row-actions">
             <a href="/session/{{ s['id'] }}" class="btn primary small">Continue</a>
-            <form method="post" action="/session/{{ s['id'] }}/delete" class="inline-form"
-                  onsubmit="return confirm('Delete this session and all its photos? This cannot be undone.');">
+            <form method="post" action="/session/{{ s['id'] }}/delete" class="inline-form delete-session-form">
               <button type="submit" class="btn danger small">Delete</button>
             </form>
           </div>

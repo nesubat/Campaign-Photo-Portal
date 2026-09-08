@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#231f20">
   <title>Admin - Campaign Photo Portal</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -21,11 +22,15 @@
   </header>
 
   <div class="admin-body">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, msg in messages %}
+        {% if category == 'success' %}<p class="banner done">{{ msg }}</p>
+        {% else %}<p class="error">{{ msg }}</p>{% endif %}
+      {% endfor %}
+    {% endwith %}
+
     <section class="admin-card">
       <h2>Add a user</h2>
-      {% with messages = get_flashed_messages() %}
-      {% if messages %}<p class="error">{{ messages[0] }}</p>{% endif %}
-      {% endwith %}
       <form method="post" action="/admin/users" class="form">
         <label for="new_name">First name</label>
         <input id="new_name" name="name" type="text" placeholder="e.g. Tom" autocomplete="off" required>
@@ -82,6 +87,41 @@
         <p class="sub">No users yet.</p>
         {% endfor %}
       </div>
+    </section>
+
+    <section class="admin-card">
+      <h2>User Sessions (not yet finalized)</h2>
+      {% if not sessions_by_employee %}
+      <p class="sub">No unfinalized sessions - everyone's up to date.</p>
+      {% endif %}
+      {% for employee, sessions in sessions_by_employee.items() %}
+      <div class="employee-group">
+        <h3 class="employee-group-name">{{ employee }}</h3>
+        <div class="user-list">
+          {% for s in sessions %}
+          <div class="user-row">
+            <div class="user-row-info">
+              <div class="user-row-name">{{ s['job_number'] }} - {{ categories.get(s['category'], s['category']) }}</div>
+              <div class="user-row-badges">
+                <span class="badge">{{ s['photo_count'] }} photo(s)</span>
+                {% if s['category'] == consignment_logging_category %}
+                <span class="badge {{ 'badge-ok' if s['keep_logs'] else '' }}">logs {{ 'on' if s['keep_logs'] else 'off' }}</span>
+                {% endif %}
+                <span class="badge">started {{ s['started_at']|started_at }}</span>
+              </div>
+            </div>
+            <div class="user-row-actions">
+              <a href="/session/{{ s['id'] }}" class="btn secondary small">View</a>
+              <form method="post" action="/session/{{ s['id'] }}/delete" class="inline-form delete-session-form">
+                <input type="hidden" name="next" value="/admin">
+                <button type="submit" class="btn danger small">Delete</button>
+              </form>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
     </section>
   </div>
   <script src="/static/topbar.js"></script>

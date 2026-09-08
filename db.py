@@ -257,6 +257,22 @@ def list_open_sessions(employee_name):
     ).fetchall()
 
 
+def list_all_open_sessions():
+    """Every unfinalized session across every employee, ordered employee
+    first (alphabetically) then oldest-started first within each employee -
+    powers the admin page's view of who has folders sitting around that were
+    never submitted, so admin can nudge the employee to finish them or
+    finalize them directly. app.py just groups these already-ordered rows by
+    employee_name; a plain dict preserves that order."""
+    conn = get_conn()
+    return conn.execute(
+        """SELECT s.*, (SELECT COUNT(*) FROM uploads u WHERE u.session_id = s.id) AS photo_count
+           FROM sessions s
+           WHERE s.finalized_at IS NULL
+           ORDER BY s.employee_name COLLATE NOCASE ASC, s.started_at ASC"""
+    ).fetchall()
+
+
 def delete_session(session_id):
     conn = get_conn()
     conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))

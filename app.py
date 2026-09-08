@@ -22,7 +22,7 @@ import io
 import re
 import sqlite3
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from flask import (
     Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory,
@@ -66,6 +66,29 @@ def _load_user():
 @app.context_processor
 def _inject_user():
     return {"current_user": g.user}
+
+
+def _format_started_at(iso_str):
+    """Reformats a stored started_at timestamp (already in the server's own
+    local time - see db.now_iso, which calls astimezone()) into
+    "YYYY/MM/DD hh:mm:ss AM/PM ZONE" for display. The zone label is read off
+    the timestamp's actual UTC offset (AEDT during daylight saving, AEST
+    otherwise) rather than hardcoded, so it stays correct across the
+    changeover instead of just always saying one or the other."""
+    if not iso_str:
+        return ""
+    dt = datetime.fromisoformat(iso_str)
+    offset = dt.utcoffset()
+    if offset == timedelta(hours=11):
+        zone = "AEDT"
+    elif offset == timedelta(hours=10):
+        zone = "AEST"
+    else:
+        zone = dt.strftime("%z")
+    return f"{dt.strftime('%Y/%m/%d %I:%M:%S %p')} {zone}"
+
+
+app.jinja_env.filters["started_at"] = _format_started_at
 
 
 def sanitize_for_filename(raw: str) -> str:
@@ -227,7 +250,13 @@ def change_pin():
 @app.route("/admin")
 @auth.admin_required
 def admin_page():
-    return render_template("admin.html", users=db.list_users())
+    sessions_by_employee = {}
+    for row in db.list_all_open_sessions():
+        sessions_by_employee.setdefault(row["employee_name"], []).append(row)
+    return render_template(
+        "admin.html", users=db.list_users(), sessions_by_employee=sessions_by_employee,
+        categories=CATEGORIES, consignment_logging_category=CONSIGNMENT_LOGGING_CATEGORY,
+    )
 
 
 @app.route("/admin/users", methods=["POST"])
@@ -437,13 +466,26 @@ def _own_session_or_403(sess):
 @app.route("/session/<session_id>/delete", methods=["POST"])
 @auth.login_required
 def delete_session(session_id):
+    """Plain form fallback: deletes then redirects (with a flash) to `next`
+    (defaults to "/"). The list pages (Active Sessions, admin's User
+    Sessions) submit this via fetch instead - see topbar.js - so the row
+    just disappears in place rather than reloading the whole page; `ajax=1`
+    marks that case and gets a bare JSON result with no flash/redirect,
+    since there's no page load left for a flash to appear on."""
+    is_ajax = request.form.get("ajax") == "1"
+    next_url = request.form.get("next") or "/"
     sess = db.get_session(session_id)
     if not sess:
+        if is_ajax:
+            return jsonify(ok=False, error="Session not found."), 404
         abort(404)
     _own_session_or_403(sess)
     if sess["finalized_at"]:
-        flash("This batch was already submitted - it can't be deleted.")
-        return redirect("/")
+        message = "This batch was already submitted - it can't be deleted."
+        if is_ajax:
+            return jsonify(ok=False, error=message), 400
+        flash(message)
+        return redirect(next_url)
 
     job_number, category = sess["job_number"], sess["category"]
     touched_consignments = set()
@@ -458,8 +500,10 @@ def delete_session(session_id):
     db.delete_session(session_id)
     _cleanup_empty_job_dir(job_number, category)
 
+    if is_ajax:
+        return jsonify(ok=True)
     flash(f"Session for {job_number} deleted.", "success")
-    return redirect("/")
+    return redirect(next_url)
 
 
 @app.route("/session/<session_id>/edit-job-number", methods=["POST"])

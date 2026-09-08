@@ -367,6 +367,13 @@ h1, h2, .job, .btn, .consignment-card-header, .user-row-name, .badge, .user-menu
 .badge-ok { background: var(--good-bg); color: var(--good); }
 .badge-warn { background: var(--warn-bg); color: var(--warn); }
 
+.employee-group { margin-bottom: 18px; }
+.employee-group:last-child { margin-bottom: 0; }
+.employee-group-name {
+  font-size: 13px; font-weight: 600; color: var(--ink-soft); margin: 0 0 8px;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+
 .user-list { display: flex; flex-direction: column; gap: 10px; }
 .user-row {
   display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
