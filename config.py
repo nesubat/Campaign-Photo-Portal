@@ -80,11 +80,63 @@ DRIVE_BATCH_TIMEOUT_SEC = 240
 
 # Photo category, chosen once per session on the start form. Slug (key) is used for
 # local folder names and stored in the DB; label (value) is shown in the UI and used
-# as the Drive subfolder name.
+# as the Drive subfolder name (unless DRIVE_FOLDER_OVERRIDES below says otherwise).
 CATEGORIES = {
     "packing": "Packing Photos",
     "dispatch": "Dispatch Photos",
+    "new_store_kits": "New Store Kits",
 }
+
+# The one category that works as a shared, multi-person "kit" instead of a
+# one-person batch - see kits.py and db.py's kits/kit_packs/kit_pack_items
+# tables. Picking it on the start form asks for a kit name too, and everyone
+# who starts the same job + kit name lands in the SAME session, packing
+# numbered packs side by side.
+NEW_STORE_KITS_CATEGORY = "new_store_kits"
+
+# Drive folder name to use for a category instead of its CATEGORIES label.
+# Kit photos are packing photos as far as the office is concerned - they
+# belong in the job's existing "Packing Photos" folder, not a new folder per
+# kit or pack (the user's explicit instruction). Locally they still live under
+# uploads/<Job>/new_store_kits/ so the two kinds of session never mix on disk;
+# only the Drive side is merged.
+DRIVE_FOLDER_OVERRIDES = {"new_store_kits": "Packing Photos"}
+
+# Longest New Store Kit name accepted on the start form (after trimming and
+# collapsing spaces). It becomes part of a Drive Sheet's name and the Active
+# Sessions card title, so a pasted paragraph shouldn't make it through.
+KIT_NAME_MAX_LEN = 60
+
+# A pack is reserved for whoever is editing it until they save it or move out
+# of it - reservations never expire on their own, since "Mike's phone is in
+# his pocket while he tapes the box" is normal, not abandonment. Once the
+# holder's last heartbeat (every poll from their open page) is older than
+# this, another collaborator MAY take the pack over - only deliberately, after
+# a "Mike has been idle for 14 min on Pack 3. Take it over?" confirm. That's
+# how a forgotten phone stops blocking Final Submit for everyone else.
+PACK_IDLE_TAKEOVER_SEC = 600
+
+# How often (seconds) an open kit page asks the server for the latest kit
+# state. Doubles as the holder's heartbeat for the pack they're editing, so it
+# must stay well under PACK_IDLE_TAKEOVER_SEC.
+KIT_POLL_INTERVAL_SEC = 4
+
+# The kit's Pack Log Sheet lists every pack's photo links, so it's written
+# once every submitted kit photo has reached Drive. If some still haven't this
+# many minutes after Final Submit (a slow hotspot, one bad file), a partial
+# Sheet is written anyway so the office isn't left with nothing...
+KIT_SHEET_FORCE_AFTER_MIN = 30
+
+# ...and rewritten at most this often (minutes) while photos keep trickling
+# in - only when the number of synced photos has actually changed since the
+# last write, so a photo that can never sync doesn't cause a Sheet rewrite
+# every few minutes forever...
+KIT_SHEET_PARTIAL_RETRY_MIN = 10
+
+# ...until this many hours after Final Submit, when the last write is treated
+# as final and the kit records "N photo(s) never reached Drive" instead of
+# retrying indefinitely.
+KIT_SHEET_GIVE_UP_HOURS = 24
 
 # Only this category ever offers the "keep logs" option (Consignment #/Store
 # name, Item ID, Google Sheet) - see db.py's `consignments` table and
@@ -138,3 +190,130 @@ def load_drive_config():
     if not web_app_url or not shared_secret:
         return None
     return {"webAppUrl": web_app_url, "sharedSecret": shared_secret}
+
+
+# Pack labels (labels.py) - printed on the Zebra ZD420d connected to the
+# server machine. The real label stock and the printer's Windows name are
+# only known once someone is at that machine, so they live in .env (see
+# .env.example) rather than here; these are the fallbacks until then: the
+# standard 100 x 150 mm (4 x 6 in) courier label, at the ZD420d's 203 dpi
+# (a 300 dpi variant of the printer exists - set LABEL_DPI=300 for that one).
+LABEL_DEFAULTS = {"widthMm": 100.0, "heightMm": 150.0, "dpi": 203, "marginMm": 4.0}
+
+# The label font: Arial Black, the TrueType file every Windows install has.
+# The Zebra has no Arial Black of its own, so labels.py draws each label with
+# this file on the server and sends it to the printer as an image - which is
+# also what the preview page shows. LABEL_FONT_FILE in .env points at another
+# .ttf; if the file can't be loaded, labels fall back to the printer's own
+# built-in font (with a warning) rather than failing to print.
+LABEL_FONT_FILE_DEFAULT = r"C:\Windows\Fonts\ariblk.ttf"
+
+# How the label reads on the stock (LABEL_ORIENTATION in .env). LABEL_WIDTH_MM
+# is always the stock's width ACROSS the printer (100 mm for the courier
+# label), LABEL_HEIGHT_MM its length along the feed; "landscape" lays the
+# label out with the long side horizontal - on the 100 x 150 courier label
+# that's 150 x 100 mm, turned 90 degrees for the printer; stock that's
+# already wider than long (100 x 50) prints as it feeds. If the labels come
+# out upside down for the way the boxes are handled, "landscape-flipped"
+# turns them the other way; "portrait" = the stock as it feeds.
+LABEL_ORIENTATIONS = ("landscape", "landscape-flipped", "portrait")
+LABEL_ORIENTATION_DEFAULT = "landscape"
+
+# The widest stock the ZD420d's print head can take: 104 mm (4.09 in), plus
+# a little slack for rounding - anything wider was almost certainly typed
+# as the label reads (150 x 100) rather than as it feeds (100 x 150).
+LABEL_MAX_HEAD_WIDTH_MM = 108.0
+# (env var, key, lowest accepted, highest accepted, int?) - a value outside
+# its range is almost certainly a typo (e.g. inches typed where mm belong),
+# and printing on the wrong size is worse than printing on the default.
+_LABEL_NUMBER_SETTINGS = (
+    ("LABEL_WIDTH_MM", "widthMm", 10.0, 300.0, False),
+    ("LABEL_HEIGHT_MM", "heightMm", 10.0, 1000.0, False),
+    ("LABEL_DPI", "dpi", 100, 1200, True),
+    ("LABEL_MARGIN_MM", "marginMm", 0.0, 50.0, False),
+)
+
+# Bad-value warnings already printed - load_label_config runs on every kit
+# page poll (for "printerConfigured"), and one typo in .env shouldn't print
+# the same warning every 4 seconds per phone.
+_label_warnings_shown = set()
+
+
+def _mm(value):
+    return f"{value:g}"
+
+
+def _label_warning(message):
+    if message not in _label_warnings_shown:
+        _label_warnings_shown.add(message)
+        print(f"[labels] WARNING: {message}")
+
+
+def load_label_config():
+    """
+    Label printer settings, read from .env at call time (like
+    load_drive_config), so the defaults above apply until the real stock and
+    printer name are filled in on the server:
+
+        {"printerName": "ZDesigner ZD420-203dpi ZPL" | "" (not configured),
+         "widthMm": 100.0, "heightMm": 150.0, "dpi": 203, "marginMm": 4.0,
+         "fontFile": "C:/Windows/Fonts/ariblk.ttf" (LABEL_FONT_FILE, default Arial Black),
+         "orientation": "landscape" | "landscape-flipped" | "portrait" (LABEL_ORIENTATION)}
+
+    Never raises: a number that doesn't parse, or is out of range, falls
+    back to its default with a printed warning - a typo in .env must not
+    take the portal (or the kit page's poll) down with it. An empty printer
+    name means "not configured": Print then opens a preview page instead.
+    """
+    cfg = {"printerName": (os.environ.get("LABEL_PRINTER_NAME") or "").strip().strip('"').strip()}
+    for env_name, key, lowest, highest, as_int in _LABEL_NUMBER_SETTINGS:
+        default = LABEL_DEFAULTS[key]
+        raw = (os.environ.get(env_name) or "").strip()
+        if not raw:
+            cfg[key] = default
+            continue
+        try:
+            value = float(raw)
+            if as_int:
+                if value != int(value):
+                    raise ValueError
+                value = int(value)
+        except ValueError:
+            _label_warning(f"{env_name}={raw!r} in .env isn't a number - using {default}.")
+            cfg[key] = default
+            continue
+        if not (lowest <= value <= highest):
+            _label_warning(f"{env_name}={raw!r} in .env is out of range ({lowest}-{highest}) - using {default}.")
+            cfg[key] = default
+            continue
+        cfg[key] = value
+    # LABEL_WIDTH_MM is across the print head, so it can't be wider than it.
+    if cfg["widthMm"] > LABEL_MAX_HEAD_WIDTH_MM:
+        if cfg["heightMm"] <= LABEL_MAX_HEAD_WIDTH_MM:
+            _label_warning(
+                f"LABEL_WIDTH_MM={_mm(cfg['widthMm'])} is wider than the printer's head - it's the stock's width "
+                f"ACROSS the printer, so using {_mm(cfg['heightMm'])} x {_mm(cfg['widthMm'])} mm "
+                "(swap LABEL_WIDTH_MM and LABEL_HEIGHT_MM in .env)."
+            )
+            cfg["widthMm"], cfg["heightMm"] = cfg["heightMm"], cfg["widthMm"]
+        else:
+            _label_warning(
+                f"LABEL_WIDTH_MM={_mm(cfg['widthMm'])} is wider than the printer's head "
+                f"({_mm(LABEL_MAX_HEAD_WIDTH_MM)} mm max) - using {_mm(LABEL_DEFAULTS['widthMm'])}."
+            )
+            cfg["widthMm"] = LABEL_DEFAULTS["widthMm"]
+    # The margins have to leave something to print on.
+    if cfg["marginMm"] * 2 >= min(cfg["widthMm"], cfg["heightMm"]) * 0.8:
+        _label_warning(
+            f"LABEL_MARGIN_MM={cfg['marginMm']} leaves no room on a {cfg['widthMm']} x {cfg['heightMm']} mm "
+            f"label - using {LABEL_DEFAULTS['marginMm']}."
+        )
+        cfg["marginMm"] = min(LABEL_DEFAULTS["marginMm"], min(cfg["widthMm"], cfg["heightMm"]) * 0.1)
+    cfg["fontFile"] = (os.environ.get("LABEL_FONT_FILE") or "").strip().strip('"').strip() or LABEL_FONT_FILE_DEFAULT
+    orientation = (os.environ.get("LABEL_ORIENTATION") or "").strip().lower() or LABEL_ORIENTATION_DEFAULT
+    if orientation not in LABEL_ORIENTATIONS:
+        _label_warning(f"LABEL_ORIENTATION={orientation!r} in .env isn't one of {', '.join(LABEL_ORIENTATIONS)} - "
+                       f"using {LABEL_ORIENTATION_DEFAULT}.")
+        orientation = LABEL_ORIENTATION_DEFAULT
+    cfg["orientation"] = orientation
+    return cfg

@@ -8,6 +8,13 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  {#- What the start form shows on a re-render (validation error, kit_choice banner): the values the user
+      had typed, so a mistake in one field never costs them the other two. kit_choice carries its own copy
+      of them too, as a fallback in case a re-render only passed that. -#}
+  {% set f_job = form_job_number or (kit_choice['jobNumber'] if kit_choice else '') or '' %}
+  {% set f_cat = form_category or (kit_choice['category'] if kit_choice else '') or '' %}
+  {% set f_kit = form_kit_name or (kit_choice['kitName'] if kit_choice else '') or '' %}
+  {% set f_is_kit = new_store_kits_category and f_cat == new_store_kits_category %}
   <header class="topbar">
     <div class="topbar-left">
       <div class="job">📷 Campaign Photo Portal</div>
@@ -21,8 +28,13 @@
     <p class="sub">Enter the Job Number to start uploading photos.</p>
 
     {% if submitted is not none %}
+      {% if submitted_kit %}
+    <p class="banner done">✅ New Store Kit submitted for <br>
+      {{ submitted_kit }} - {{ submitted_job if submitted_job else 'this job' }} <br> {{ submitted }} photo(s).</p>
+      {% else %}
     <p class="banner done">✅ Batch submitted successfully for <br>
       {{ submitted_job if submitted_job else 'this job' }} <br> {{ submitted }} photo(s).</p>
+      {% endif %}
     {% endif %}
 
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
@@ -53,24 +65,83 @@
     </div>
     {% endif %}
 
+    {#- The typed job already has kit(s) but the typed name matched none of them - most likely a typo
+        ("Store12" vs "Store 12") that would otherwise quietly split one kit's packs across two. Joining an
+        open kit / reopening a submitted one re-posts its name exactly (so /start's find_kit hits - and a
+        submitted kit is reopened there); creating re-posts the typed name with force_new_kit, the same
+        escape hatch force_new is for existing_session above. kit_choice.kits is rev 5's list of every kit
+        of the job ({kitName, status, submittedAt}); openKits (names only) is the older shape. -#}
+    {% if kit_choice %}
+    {% set choice_kits = kit_choice['kits'] if kit_choice['kits'] is defined and kit_choice['kits'] is not none
+                         else (kit_choice['openKits'] or [])|map('string')|list %}
+    {% set choice_open = namespace(n=0, done=0) %}
+    {% for k in choice_kits %}{% if k is mapping and k['status'] == 'submitted' %}{% set choice_open.done = choice_open.done + 1 %}{% else %}{% set choice_open.n = choice_open.n + 1 %}{% endif %}{% endfor %}
+    <div class="banner warn kit-choice">
+      ⚠️ <strong>{{ kit_choice['jobNumber'] }}</strong> already has
+      {{- ' open' if not choice_open.done else (' submitted' if not choice_open.n else '') }} kits:
+      <div class="existing-session-actions">
+        {% for k in choice_kits %}
+        {% set k_name = k['kitName'] if k is mapping else k %}
+        {% set k_done = k is mapping and k['status'] == 'submitted' %}
+        <form method="post" action="/start" class="inline-form kit-choice-form">
+          <input type="hidden" name="job_number" value="{{ kit_choice['jobNumber'] }}">
+          <input type="hidden" name="category" value="{{ kit_choice['category'] }}">
+          <input type="hidden" name="kit_name" value="{{ k_name }}">
+          {% if k_done %}
+          <button type="submit" class="btn secondary small kit-choice-reopen"{% if k['submittedAt'] %} title="Submitted {{ k['submittedAt'] }}"{% endif %}>Reopen {{ k_name }}{% if k['submittedAt'] %} <span class="kit-choice-date">(submitted {{ k['submittedAt'].split(' ')[0] }})</span>{% endif %}</button>
+          {% else %}
+          <button type="submit" class="btn primary small">Join {{ k_name }}</button>
+          {% endif %}
+        </form>
+        {% endfor %}
+      </div>
+      <div class="existing-session-actions kit-choice-new">
+        <span class="kit-choice-or">or</span>
+        <form method="post" action="/start" class="inline-form kit-choice-form">
+          <input type="hidden" name="job_number" value="{{ kit_choice['jobNumber'] }}">
+          <input type="hidden" name="category" value="{{ kit_choice['category'] }}">
+          <input type="hidden" name="kit_name" value="{{ kit_choice['kitName'] }}">
+          <input type="hidden" name="force_new_kit" value="1">
+          <button type="submit" class="btn secondary small">Create new kit "{{ kit_choice['kitName'] }}"</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
     <form method="post" action="/start" class="form">
       <label for="job_number">Job Number</label>
       <div class="field-wrap">
         <input id="job_number" name="job_number" type="text" inputmode="text"
                autocomplete="off" autocapitalize="characters" required
-               pattern="[Jj][0-9]{6}" maxlength="7" placeholder="e.g. J457008">
+               pattern="[Jj][0-9]{6}" maxlength="7" placeholder="e.g. J457008" value="{{ f_job }}">
         <div id="jobNumberBubble" class="field-bubble hidden" role="alert"></div>
+        <div id="jobSuggestions" class="autocomplete-list hidden" role="listbox" aria-label="Recent job numbers"></div>
       </div>
 
       <label for="category">Photo Type</label>
-      <select id="category" name="category" required onchange="toggleKeepLogs(this)">
-        <option value="" disabled selected>Select photo type...</option>
+      <select id="category" name="category" required onchange="togglePhotoType()">
+        <option value="" disabled {% if f_cat not in categories %}selected{% endif %}>Select photo type...</option>
         {% for key, label in categories.items() %}
-        <option value="{{ key }}">{{ label }}</option>
+        <option value="{{ key }}" {% if key == f_cat %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
 
-      <div id="keepLogsRow" class="hidden">
+      {#- Both rows below are shown/hidden and made required HERE, from the category the form is being
+          rendered with, not just by the script further down - so an error re-render (or a phone with
+          scripts slow to run) never shows a kit-name field for Dispatch Photos or hides it for a kit.
+          The script still re-runs the same toggle on load and on pageshow, since a browser restoring the
+          page from its back/forward cache (or keeping form values over a reload) can bring back a
+          different select value than the one this HTML was rendered with. -#}
+      <div id="kitNameRow" class="kit-name-row{{ '' if f_is_kit else ' hidden' }}">
+        <label for="kit_name">New Store Kit name</label>
+        <input id="kit_name" name="kit_name" type="text" maxlength="60" autocomplete="off"
+               autocapitalize="words" placeholder="e.g. Store 12" value="{{ f_kit }}"{% if f_is_kit %} required{% endif %}>
+        <div id="kitSuggestions" class="kit-suggestions hidden"></div>
+        {#- Says what Start will do when the name is one of the job's SUBMITTED kits: reopen it. -#}
+        <div id="kitSuggestHint" class="kit-suggest-hint hidden" aria-live="polite"></div>
+      </div>
+
+      <div id="keepLogsRow" class="{{ '' if f_cat == consignment_logging_category else 'hidden' }}">
         <label class="checkbox-label">
           <input type="checkbox" id="keep_logs" name="keep_logs">
           Keep proof logs (Consignment #, Item ID, Google Sheet)
@@ -80,11 +151,63 @@
       <button type="submit">Start Uploading</button>
     </form>
 
-    {% if open_sessions %}
+    {% if open_kits or open_sessions %}
     <div class="active-sessions">
       <h2>Active Sessions</h2>
       <div class="session-list">
-        {% for s in open_sessions %}
+        {#- New Store Kits first, and visible to EVERYONE (not just their creator) - a kit is one shared
+            session several people pack into at once, so this list is how a second packer finds it. The
+            root keeps .session-row so topbar.js's in-place AJAX delete removes the whole card. -#}
+        {% for k in open_kits or [] %}
+        <div class="session-row kit-row">
+          <div class="session-row-info">
+            <div class="session-row-name">{{ k['kit_name'] }} - {{ k['job_number'] }}</div>
+            <div class="session-row-badges">
+              <span class="badge badge-kit">{{ categories.get(new_store_kits_category, 'New Store Kits') }}</span>
+              {#- Submitted before and reopened for changes - its Drive sheet is out of date until the next
+                  Final Submit. -#}
+              {% if k['reopened'] %}<span class="badge badge-warn">reopened</span>{% endif %}
+              <span class="badge">{{ k['pack_count'] }} pack(s)</span>
+              <span class="badge">{{ k['photo_count'] }} photo(s)</span>
+              <span class="badge">started by {{ k['created_by'] }} · {{ k['started_at']|started_at }}</span>
+            </div>
+            {% if k['collaborators'] %}
+            <div class="kit-row-line">👥 {{ k['collaborators']|join(', ') }}</div>
+            {% endif %}
+            {% if k['working'] %}
+            <div class="kit-row-line">Working now:
+              {% for w in k['working'] -%}
+              {{ w['name'] }} (Pack {{ w['packNumber'] }}{% if w['idleMinutes'] is not none and w['idleMinutes'] >= 2 %}, idle {{ w['idleMinutes'] }} min{% endif %}){{ ', ' if not loop.last }}
+              {%- endfor %}
+            </div>
+            {% endif %}
+            {#- The fallback for a reservation the kit page couldn't release on the way out (tab closed,
+                phone died, a navigation the browser didn't cache): without it this viewer's pack would
+                block Final Submit for everyone until the idle takeover. -#}
+            {% if k['my_pack_number'] %}
+            <div class="kit-row-mine">
+              <span>You still have Pack {{ k['my_pack_number'] }} open</span>
+              <span class="kit-row-mine-actions">
+                <a href="/session/{{ k['session_id'] }}" class="btn primary small">Resume</a>
+                <form method="post" action="/session/{{ k['session_id'] }}/release-my-packs" class="inline-form">
+                  <button type="submit" class="btn secondary small">Release</button>
+                </form>
+              </span>
+            </div>
+            {% endif %}
+          </div>
+          <div class="session-row-actions">
+            <a href="/session/{{ k['session_id'] }}" class="btn primary small">Join</a>
+            {% if k['can_delete'] %}
+            <form method="post" action="/session/{{ k['session_id'] }}/delete" class="inline-form delete-session-form"
+                  data-confirm='Delete the New Store Kit "{{ k['kit_name'] }}" for {{ k['job_number'] }} for EVERYONE - all its packs, items and photos? This cannot be undone.'>
+              <button type="submit" class="btn danger small">Delete</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+        {% for s in open_sessions or [] %}
         <div class="session-row">
           <div class="session-row-info">
             <div class="session-row-name">{{ s['job_number'] }} - {{ categories.get(s['category'], s['category']) }}</div>
@@ -115,14 +238,138 @@
   </div>
 
   <script id="pageData"
-          data-consignment-logging-category='{{ consignment_logging_category|tojson }}'></script>
+          data-consignment-logging-category='{{ consignment_logging_category|tojson }}'
+          data-new-store-kits-category='{{ new_store_kits_category|default(none)|tojson }}'
+          data-recent-job-numbers='{{ recent_job_numbers|default([])|tojson }}'
+          data-open-kit-names='{{ open_kit_names|default([])|tojson }}'
+          data-kit-names='{{ (kit_names if kit_names is defined else none)|tojson }}'></script>
   <script>
     var pageData = document.getElementById('pageData').dataset;
     var CONSIGNMENT_LOGGING_CATEGORY = JSON.parse(pageData.consignmentLoggingCategory);
+    var NEW_STORE_KITS_CATEGORY = JSON.parse(pageData.newStoreKitsCategory || 'null');
+    var RECENT_JOB_NUMBERS = JSON.parse(pageData.recentJobNumbers || '[]');
+    // Every kit of every job: [{jobNumber, kitName, status: "open"|"submitted",
+    // submittedAt}]. A server that only sends the older open_kit_names
+    // ([{jobNumber, kitName}], open kits only) still works - those are open.
+    var KIT_NAMES = JSON.parse(pageData.kitNames || 'null');
+    if (!KIT_NAMES) {
+      KIT_NAMES = JSON.parse(pageData.openKitNames || '[]').map(function (k) {
+        return { jobNumber: k.jobNumber, kitName: k.kitName, status: 'open', submittedAt: null };
+      });
+    }
 
-    function toggleKeepLogs(sel) {
-      var row = document.getElementById('keepLogsRow');
-      row.classList.toggle('hidden', sel.value !== CONSIGNMENT_LOGGING_CATEGORY);
+    // Case/space-insensitive, same idea as the server's kit_norm - so "store 12"
+    // typed by hand still lights up the "Store 12" suggestion it will join.
+    function normKitName(value) {
+      return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    }
+
+    function kitsForJob(job) {
+      var out = { open: [], submitted: [] };
+      if (!/^J[0-9]{6}$/.test(job)) return out;
+      KIT_NAMES.forEach(function (k) {
+        if (String(k.jobNumber).toUpperCase() !== job) return;
+        (k.status === 'submitted' ? out.submitted : out.open).push(k);
+      });
+      return out;
+    }
+
+    function kitSuggestionButton(kit, kitInput) {
+      var name = String(kit.kitName);
+      var btn = document.createElement('button');
+      btn.type = 'button'; // inside the start form - must never submit it
+      btn.className = 'kit-suggestion-btn' + (kit.status === 'submitted' ? ' is-submitted' : '');
+      btn.textContent = kit.status === 'submitted' ? name + ' ✓' : name;
+      btn.setAttribute('data-kit-name', name);
+      if (kit.status === 'submitted') {
+        btn.setAttribute('data-submitted-at', kit.submittedAt || '');
+        btn.title = 'Submitted' + (kit.submittedAt ? ' ' + kit.submittedAt : '') + ' - starting it reopens it';
+      }
+      btn.addEventListener('click', function () {
+        kitInput.value = name;
+        markKitSuggestion();
+      });
+      return btn;
+    }
+
+    // Buttons under the kit-name field for the typed job's kits: "Open kits
+    // for J456789:" lets a second packer join a colleague's kit with one tap
+    // instead of retyping its name (and risking a near-miss spelling that
+    // would start a separate kit); "Submitted kits:" brings a finished kit
+    // back to change it (Start reopens it). Only for a fully valid job
+    // number: a prefix could match several jobs' kits.
+    function updateKitSuggestions() {
+      var box = document.getElementById('kitSuggestions');
+      var jobInput = document.getElementById('job_number');
+      var kitInput = document.getElementById('kit_name');
+      if (!box || !jobInput || !kitInput) return;
+      var job = jobInput.value.trim().toUpperCase();
+      var kits = kitsForJob(job);
+      var names = function (list) { return list.map(function (k) { return k.kitName; }).join('|'); };
+      var key = job + '|' + names(kits.open) + '||' + names(kits.submitted);
+      if (box.getAttribute('data-for') === key) {
+        markKitSuggestion();
+        return; // same job, same kits - keep the buttons as they are
+      }
+      box.setAttribute('data-for', key);
+      while (box.firstChild) box.removeChild(box.firstChild);
+      if (!kits.open.length && !kits.submitted.length) {
+        box.classList.add('hidden');
+        markKitSuggestion();
+        return;
+      }
+      [['open', 'Open kits for ' + job + ':'],
+       ['submitted', (kits.open.length ? 'Submitted kits:' : 'Submitted kits for ' + job + ':')]].forEach(function (group) {
+        var list = kits[group[0]];
+        if (!list.length) return;
+        var label = document.createElement('span');
+        label.className = 'kit-suggestions-label';
+        label.textContent = group[1];
+        box.appendChild(label);
+        list.forEach(function (kit) { box.appendChild(kitSuggestionButton(kit, kitInput)); });
+      });
+      box.classList.remove('hidden');
+      markKitSuggestion();
+    }
+
+    function markKitSuggestion() {
+      var box = document.getElementById('kitSuggestions');
+      var kitInput = document.getElementById('kit_name');
+      var hint = document.getElementById('kitSuggestHint');
+      if (!box || !kitInput) return;
+      var typed = normKitName(kitInput.value);
+      var reopening = null;
+      Array.prototype.forEach.call(box.querySelectorAll('.kit-suggestion-btn'), function (btn) {
+        var on = !!typed && normKitName(btn.getAttribute('data-kit-name')) === typed;
+        btn.setAttribute('aria-pressed', String(on));
+        if (on && btn.classList.contains('is-submitted')) reopening = btn;
+      });
+      if (!hint) return;
+      var text = '';
+      if (reopening && !box.classList.contains('hidden')) {
+        var at = reopening.getAttribute('data-submitted-at');
+        text = '"' + reopening.getAttribute('data-kit-name') + '" was already submitted' +
+          (at ? ' (' + at.split(' ')[0] + ')' : '') + ' - Start Uploading reopens it so you can make changes.';
+      }
+      hint.textContent = text;
+      hint.classList.toggle('hidden', !text);
+    }
+
+    // Shows only the rows that belong to the chosen Photo Type: the keep-logs
+    // checkbox for Packing Photos, the kit-name field (and its required flag)
+    // for New Store Kits. The server already rendered the right state - this
+    // re-syncs it with whatever the select actually holds now.
+    function togglePhotoType() {
+      var sel = document.getElementById('category');
+      if (!sel) return;
+      var keepLogsRow = document.getElementById('keepLogsRow');
+      if (keepLogsRow) keepLogsRow.classList.toggle('hidden', sel.value !== CONSIGNMENT_LOGGING_CATEGORY);
+      var isKit = !!NEW_STORE_KITS_CATEGORY && sel.value === NEW_STORE_KITS_CATEGORY;
+      var kitRow = document.getElementById('kitNameRow');
+      var kitInput = document.getElementById('kit_name');
+      if (kitRow) kitRow.classList.toggle('hidden', !isKit);
+      if (kitInput) kitInput.required = isKit;
+      updateKitSuggestions();
     }
 
     (function () {
@@ -185,6 +432,82 @@
         flagInvalid();
       });
 
+      // --- Job-number autocomplete ---------------------------------------
+      // Deliberately NOT aggressive: nothing appears until 3 characters are
+      // typed that could still become a valid number, it only ever offers
+      // (never fills in by itself), Enter still just submits what's typed, and
+      // it disappears the moment the value is invalid, complete or the field
+      // is left. Whether to show is decided from VALID_SO_FAR on the value
+      // itself - never from the error bubble's DOM state, which the listener
+      // above may not have updated yet (listeners on one element run in
+      // registration order, and a typo being fixed must bring the list back
+      // on that same keystroke). Most recently used job numbers come first.
+      var suggestions = document.getElementById('jobSuggestions');
+      var MAX_JOB_SUGGESTIONS = 5;
+
+      function hideJobSuggestions() {
+        if (!suggestions) return;
+        suggestions.classList.add('hidden');
+        while (suggestions.firstChild) suggestions.removeChild(suggestions.firstChild);
+      }
+
+      function pickJob(jobNumber) {
+        jobInput.value = jobNumber.toUpperCase();
+        clearInvalid();
+        hideJobSuggestions();
+        // Everything else listening to the field (validation, the kit-name
+        // suggestions) reacts exactly as if the number had been typed.
+        var evt;
+        try {
+          evt = new Event('input', { bubbles: true });
+        } catch (err) {
+          evt = document.createEvent('Event');
+          evt.initEvent('input', true, false);
+        }
+        jobInput.dispatchEvent(evt);
+      }
+
+      function updateJobSuggestions() {
+        if (!suggestions) return;
+        var value = jobInput.value;
+        if (value.length < 3 || !VALID_SO_FAR.test(value)) { hideJobSuggestions(); return; }
+        var typed = value.toUpperCase();
+        var matches = [];
+        for (var i = 0; i < RECENT_JOB_NUMBERS.length; i++) {
+          var jn = String(RECENT_JOB_NUMBERS[i]).toUpperCase();
+          if (jn === typed) { hideJobSuggestions(); return; } // already exactly a known job - nothing to offer
+          if (jn.indexOf(typed) === 0 && matches.length < MAX_JOB_SUGGESTIONS) matches.push(jn);
+        }
+        if (!matches.length) { hideJobSuggestions(); return; }
+
+        while (suggestions.firstChild) suggestions.removeChild(suggestions.firstChild);
+        matches.forEach(function (jn) {
+          var item = document.createElement('div');
+          item.className = 'autocomplete-item';
+          item.setAttribute('role', 'option');
+          item.textContent = jn;
+          // mousedown (not click) fires before the input would blur, so
+          // preventDefault here keeps focus (and the keyboard) in the field
+          // and the pick lands before the blur listener hides this list.
+          item.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            pickJob(jn);
+          });
+          suggestions.appendChild(item);
+        });
+        suggestions.classList.remove('hidden');
+      }
+
+      jobInput.addEventListener('input', updateJobSuggestions);
+      jobInput.addEventListener('input', updateKitSuggestions);
+      jobInput.addEventListener('blur', hideJobSuggestions);
+      jobInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') hideJobSuggestions();
+      });
+
+      var kitInput = document.getElementById('kit_name');
+      if (kitInput) kitInput.addEventListener('input', markKitSuggestion);
+
       // Safety net for mobile browsers that don't reliably block submission
       // on their own just because a field is invalid (confirmed for iOS
       // Safari and some Android browsers) - checks the actual value directly
@@ -203,6 +526,15 @@
             touched = true;
             flagInvalid();
             jobInput.focus();
+            return;
+          }
+          // Same safety net for a New Store Kit's name (required only while
+          // that row is showing) - the server would reject it anyway, but
+          // only after the overlay had already promised "Starting...".
+          if (kitInput && kitInput.required && !kitInput.value.trim()) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            kitInput.focus();
           }
         });
       }
@@ -220,7 +552,34 @@
         var btn = form.querySelector('button[type="submit"]');
         if (btn) btn.disabled = true;
       });
+
+      // The kit_choice banner's Join / Create buttons are /start submissions
+      // too - same overlay, and the tapped button disabled so a second tap on
+      // a slow hotspot can't send it twice.
+      Array.prototype.forEach.call(document.querySelectorAll('form.kit-choice-form'), function (choiceForm) {
+        choiceForm.addEventListener('submit', function () {
+          overlay.classList.remove('hidden');
+          var btn = choiceForm.querySelector('button[type="submit"]');
+          if (btn) btn.disabled = true;
+        });
+      });
+
+      // Coming Back (swipe/back button) from the upload page restores this
+      // page from the browser's back/forward cache exactly as it was left -
+      // overlay still up saying "Starting...", Start button still disabled.
+      // pageshow fires for that restore (and on a normal load, where this is
+      // a harmless no-op), so it resets both and re-syncs the Photo Type rows.
+      window.addEventListener('pageshow', function () {
+        overlay.classList.add('hidden');
+        Array.prototype.forEach.call(
+          document.querySelectorAll('form.form button[type="submit"], form.kit-choice-form button[type="submit"]'),
+          function (btn) { btn.disabled = false; }
+        );
+        togglePhotoType();
+      });
     })();
+
+    togglePhotoType();
   </script>
   <script src="/static/topbar.js"></script>
 </body>

@@ -15,7 +15,9 @@ mirrored to a company Google Drive folder in the background.
 | `db.py` | SQLite schema + helpers (jobs, sessions, uploads) |
 | `drive_sync.py` | Background thread that pushes photos to Google Drive |
 | `config.py` | All the tunable settings in one place |
-| `templates/`, `static/` | The web pages staff and supervisors see |
+| `kits.py` | New Store Kit rules: item numbers, pack lines, the "missing numbers" report |
+| `labels.py` | Pack labels for the Zebra printer (ZPL) + `py labels.py --list-printers` / `--test-print` |
+| `templates/`, `static/` | The web pages staff and supervisors see (`static/kit.js` = the New Store Kit page) |
 | `apps-script/DriveUploader.gs` | Deploy this separately to Google Apps Script |
 | `data/employees.json` | Preset name dropdown - edit with real staff names |
 | `.env.example` | Copy to `.env` once Drive is set up (never committed - see .gitignore) |
@@ -74,9 +76,9 @@ automatically - you don't need to re-upload anything.
 
 ## 5. Where everything ends up
 
-Every session starts by picking a **Photo Type** - Packing Photos or Dispatch
-Photos (edit `CATEGORIES` in `config.py` to add more) - which keeps the two
-kinds of photos separated everywhere downstream:
+Every session starts by picking a **Photo Type** - Packing Photos, Dispatch
+Photos or New Store Kits (edit `CATEGORIES` in `config.py` to add more) - which
+keeps the kinds of photos separated everywhere downstream:
 
 - **Local copy (always)**: `uploads/<JobNumber>/<packing|dispatch>/photo.jpg`,
   thumbnails in `uploads/<JobNumber>/<packing|dispatch>/thumbs/`.
@@ -91,6 +93,71 @@ kinds of photos separated everywhere downstream:
 
 Drive sync only picks up a photo once its batch has been **Submitted** -
 photos sit local-only until then.
+
+**New Store Kits** work a little differently (see the next section): locally they
+live in `uploads/<JobNumber>/new_store_kits/`, but in Drive the photos go into the
+job's normal **`<JobNumber>/Packing Photos/`** folder (each file's description says
+which kit and pack it belongs to), and each kit gets its own report sheet directly
+in **`<JobNumber>/`**: `<JobNumber> - <Kit name> - Pack Log` (tab *Packs*: one row
+per pack with its item numbers, first/last edit, collaborators and photo links, plus
+a "No pack" row for kit photos; tab *Summary*: who submitted it and what's missing).
+Next to it, `<JobNumber> - <Kit name> - Labels.pdf` holds the kit's pack labels (one
+page per pack, exactly as they print). Both are only written after **Final Submit**;
+when a reopened kit is submitted again the sheet is rewritten and a new labels PDF
+replaces the old one (the old PDF goes to Drive's trash).
+
+## 5a. New Store Kits
+
+On the kit page the ✏️ next to the job number edits both the **job number** and the
+**kit name**. Changing the job number moves the kit (and its photos) for everyone on it;
+if the kit was submitted before, its Drive sheet, labels and photos move to the new job's
+folders at the next Final Submit (their links stay the same).
+
+1. Start page: type the Job Number, pick **New Store Kits**, type the kit name
+   (e.g. "Store 12"). Anyone who starts the same job + kit name joins the same kit -
+   it shows up for everyone under Active Sessions. A kit that was already submitted is
+   **reopened** instead (photos already sent to Drive can't be deleted).
+2. On the kit page each person edits one **pack** at a time: type the item number
+   (`J456781`) - the cursor jumps to the index field (number keypad) - then add index
+   after index (`02`, `05`, ...). The pack shows `J456781-02, 05, 06, 08 & 09`.
+   **Save Pack**, then **+ New Pack** for the next box (the number it will get is shown under
+   the button). Photos that belong to no pack go in the **Kit photos** section, shown
+   whenever you're not editing a pack.
+3. **Packed so far**, at the top of the page right under the bar, shows per series the last
+   number and what's missing, and who is working on which pack right now.
+4. When nobody is still editing a pack (and no photo is still uploading on your phone),
+   **Final Submit** appears; answering **Yes** to "Is this packed completely?" sends it to Drive.
+
+### Pack labels (Zebra ZD420d on this machine)
+
+Print buttons are on every pack card, and next to Save Pack (tick packs, or **All**,
+then **Print (N)**). Until a printer is set up, Print opens a **preview** of the labels
+at their real size instead. To set up the printer, on this machine:
+
+1. `py labels.py --list-printers` - copy the Zebra's exact name.
+2. In `.env`: `LABEL_PRINTER_NAME=<that name>`, and the label stock size as it
+   feeds through the printer (`LABEL_WIDTH_MM` = across the print head, at most 104 mm,
+   `LABEL_HEIGHT_MM`, `LABEL_DPI`, `LABEL_MARGIN_MM`) - the defaults are the standard
+   100 x 150 mm courier label at 203 dpi. Labels print **landscape**, long side across
+   (`LABEL_ORIENTATION=landscape`; `landscape-flipped` if they come out upside down,
+   or `portrait`), every line centred, in **Arial Black** (`LABEL_FONT_FILE`, default
+   `C:\Windows\Fonts\ariblk.ttf`). A pack always gets exactly one label - the text
+   shrinks to fit.
+3. `py labels.py --sample-png sample.png` shows the sample label on screen (no printing),
+   then `py labels.py --test-print` prints it.
+4. Restart `serve.py` - its startup lines say which printer (and size) Print will use.
+
+**After updating the code:** `apps-script/DriveUploader.gs` must be redeployed
+(Deploy > Manage deployments > edit > **New version**) for the kit Pack Log sheets and
+labels PDFs - until then kit photos still reach Drive, but their sheets wait (and an older
+deployment writes the sheet without the PDF; the console says so).
+
+**Drive errors in the console** (`[drive-sync] ...` / `[kit-sheet] ... failed: ...`) now say
+which side of Google answered - `script.google.com (doPost)` or the
+`script.googleusercontent.com` result page - how long it took, and what Google's error page
+said. Photo uploads and kit sheets get one quick retry a few seconds later before falling back
+to the usual retry schedule. For the full story of a failed run, open the script at
+script.google.com > **Executions**.
 
 **Local cleanup**: once a photo is confirmed synced to Drive, its local
 copy (full-res + thumbnail) is automatically deleted after

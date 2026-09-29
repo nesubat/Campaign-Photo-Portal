@@ -101,21 +101,33 @@
           {% for s in sessions %}
           <div class="user-row">
             <div class="user-row-info">
+              {#- A New Store Kit is one shared session (listed under its creator) - its kit name is what
+                  tells two open kits for the same job apart. -#}
+              {% if s['kit_name'] %}
+              <div class="user-row-name">{{ s['kit_name'] }} - {{ s['job_number'] }} - {{ categories.get(s['category'], s['category']) }}</div>
+              {% else %}
               <div class="user-row-name">{{ s['job_number'] }} - {{ categories.get(s['category'], s['category']) }}</div>
+              {% endif %}
               <div class="user-row-badges">
                 <span class="badge">{{ s['photo_count'] }} photo(s)</span>
                 {% if s['category'] == consignment_logging_category %}
                 <span class="badge {{ 'badge-ok' if s['keep_logs'] else '' }}">logs {{ 'on' if s['keep_logs'] else 'off' }}</span>
                 {% endif %}
+                {% if s['kit_name'] and s['submit_count'] %}<span class="badge badge-warn">reopened</span>{% endif %}
                 <span class="badge">started {{ s['started_at']|started_at }}</span>
               </div>
             </div>
             <div class="user-row-actions">
               <a href="/session/{{ s['id'] }}" class="btn secondary small">View</a>
-              <form method="post" action="/session/{{ s['id'] }}/delete" class="inline-form delete-session-form">
+              {#- A kit that was ever submitted (now reopened) can't be deleted - its photos are in Drive.
+                  The server refuses it anyway; this just doesn't offer it when the row says so. -#}
+              {% if not (s['kit_name'] and s['submit_count']) %}
+              <form method="post" action="/session/{{ s['id'] }}/delete" class="inline-form delete-session-form"{% if s['kit_name'] %}
+                    data-confirm='Delete the New Store Kit "{{ s['kit_name'] }}" for {{ s['job_number'] }} for EVERYONE - all its packs, items and photos? This cannot be undone.'{% endif %}>
                 <input type="hidden" name="next" value="/admin">
                 <button type="submit" class="btn danger small">Delete</button>
               </form>
+              {% endif %}
             </div>
           </div>
           {% endfor %}

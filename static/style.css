@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Jost:wght@500;600;700&family=Work+Sans:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Jost:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap');
 
 :root {
   --ink: #231f20;       /* Dashing's own logo colour - primary brand ink */
@@ -384,3 +384,404 @@ h1, h2, .job, .btn, .consignment-card-header, .user-row-name, .badge, .user-menu
 .user-row-badges { display: flex; gap: 6px; flex-wrap: wrap; }
 .user-row-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .user-row-actions .btn { padding: 10px 14px; font-size: 13px; white-space: nowrap; }
+
+/* --- Job-number autocomplete + New Store Kit fields (start form) --- */
+/* The wrapper shrinks to the job input's own width, so the suggestion list
+   drops straight down under the input instead of spanning the whole card
+   (the error bubble is absolutely positioned too and just overflows). */
+.field-wrap { align-self: flex-start; }
+.field-wrap .autocomplete-list { min-width: 160px; }
+#jobSuggestions .autocomplete-item {
+  touch-action: manipulation; font-family: 'Jost', 'Work Sans', sans-serif; font-weight: 600;
+}
+.kit-name-row { display: flex; flex-direction: column; gap: 6px; }
+.kit-name-row input { width: 100%; }
+.kit-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+.kit-suggestions-label { font-size: 13px; color: var(--text-muted); width: 100%; }
+/* Overrides .form button (the big Start button look) - these are small
+   type="button" pills that only fill in the kit name. */
+.form .kit-suggestion-btn {
+  margin-top: 0; min-height: 44px; padding: 8px 14px; font-size: 14px; font-weight: 600;
+  background: var(--surface-muted); color: var(--ink); border: 1px solid var(--line); border-radius: 999px;
+  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.form .kit-suggestion-btn[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+.kit-choice .existing-session-actions .btn { touch-action: manipulation; }
+/* Kit buttons on the start page are hit with gloved thumbs next to other
+   buttons - 44px tall (inline-flex keeps the label centred at that height). */
+.kit-choice .btn, .kit-row .btn {
+  min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
+}
+.kit-choice-new { align-items: center; }
+.kit-choice-or { font-weight: 600; }
+/* Rev 5: a job's SUBMITTED kits are offered too (picking one reopens it). */
+.form .kit-suggestion-btn.is-submitted { background: var(--surface); border-style: dashed; }
+.form .kit-suggestion-btn.is-submitted[aria-pressed="true"] { background: var(--ink); border-style: solid; }
+.kit-suggest-hint { font-size: 13px; line-height: 1.4; color: var(--warn); font-weight: 600; }
+.kit-choice-date { font-weight: 400; opacity: 0.85; }
+
+/* --- Active Sessions: New Store Kit cards --- */
+.kit-row .session-row-info { flex: 1; min-width: 0; }
+.kit-row .session-row-name { overflow-wrap: anywhere; }
+.badge-kit { background: var(--ink); color: #fff; }
+.kit-row-line { font-size: 13px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.kit-row-mine {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--warn); background: var(--warn-bg);
+  padding: 8px 10px; border-radius: 8px;
+}
+.kit-row-mine-actions { display: flex; gap: 6px; }
+.kit-row-mine .btn { padding: 10px 14px; font-size: 13px; white-space: nowrap; }
+
+/* --- New Store Kit page (upload.html kit_mode) --- */
+/* No Android pull-to-refresh halfway through an upload (a reload aborts it,
+   and a camera capture isn't saved anywhere else). */
+html.kit-mode, html.kit-mode body { overscroll-behavior-y: contain; }
+/* No double-tap-zoom delay on anything tappable. */
+.kit-mode button, .kit-mode .btn, .kit-mode a, .kit-mode label, .kit-mode input { touch-action: manipulation; }
+/* On a kit page 🏠 isn't just navigation - it releases the pack on the way
+   out - so it gets a full 44px hit area; the negative margin keeps the
+   topbar looking exactly as it does on every other page. */
+.kit-mode .home-link {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px; margin: -12px -8px;
+}
+/* The kit topbar carries more (kit name in the sub-line, delete, user menu),
+   so the left block is the one that gives: the counter stays on one line,
+   and a long kit name wraps to at most two lines instead of pushing the
+   topbar taller and taller. */
+.kit-mode .topbar-left { min-width: 0; }
+.kit-mode .topbar-left > div { min-width: 0; }
+.kit-mode .topbar-right { flex-shrink: 0; }
+.kit-mode .counter { white-space: nowrap; }
+.kit-mode .topbar .who-sub {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Rev 5: a reopened kit's note (compact, × hides it for this page load) and
+   the submitted kit's banner with its "Reopen to make changes" button. */
+.banner.kit-reopened-banner {
+  margin: 10px 16px 0; padding: 10px 12px; display: flex; align-items: flex-start; gap: 10px;
+  font-size: 13px; line-height: 1.4;
+}
+.kit-reopened-banner > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.banner-dismiss {
+  position: relative; flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; border: none; padding: 0;
+  background: rgba(169,74,0,0.14); color: var(--warn); font-size: 17px; line-height: 1; cursor: pointer;
+}
+.banner-dismiss::after { content: ''; position: absolute; inset: -8px; }
+.kit-finalized-banner { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.kit-reopen-form { margin: 0; }
+.kit-reopen-form .btn { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.kit-reopen-form .btn:disabled { opacity: 0.6; cursor: default; }
+.kit-reopen-hint { font-size: 12px; line-height: 1.4; }
+
+/* Fixed at the BOTTOM, just above the Cancel / Final Submit bar - far from the
+   editor header, the inputs and Save Pack at the top (kit.js sets the exact
+   `bottom` from the bar's height, and lifts it above the on-screen keyboard
+   while that is up). Two lines at most. pointer-events none lets every tap
+   through to whatever is underneath, and it hides itself after a few
+   seconds; only a sticky toast (one with a link, e.g. the label preview)
+   takes taps - on its link and its ×. */
+.kit-notice {
+  position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); z-index: 40;
+  max-width: 480px; margin: 0 auto; padding: 10px 14px; border-radius: 10px;
+  background: var(--ink); color: #fff; font-size: 14px; font-weight: 600; line-height: 1.4;
+  box-shadow: 0 4px 18px rgba(35,31,32,0.25); pointer-events: none;
+  display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; row-gap: 2px;
+}
+.kit-notice.no-submit-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); }
+.kit-notice.is-reconnecting { background: var(--warn-bg); color: var(--warn); }
+.kit-notice.is-sticky { pointer-events: auto; }
+.kit-notice-text {
+  flex: 1 1 auto; min-width: 0;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.kit-notice-link {
+  margin-left: auto; min-height: 44px; display: inline-flex; align-items: center;
+  color: #fff; font-weight: 700; text-decoration: underline; white-space: nowrap;
+}
+.kit-notice-close {
+  position: relative; flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; border: none; padding: 0;
+  background: rgba(255,255,255,0.2); color: #fff; font-size: 18px; line-height: 1; cursor: pointer;
+}
+.kit-notice-close::after { content: ''; position: absolute; inset: -7px; }
+
+.pack-editor { scroll-margin-top: 76px; }
+.pack-editor-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pack-editor-header h2 { font-size: 17px; font-weight: 600; margin: 0; }
+.pack-editor .consignment-row input { flex: 1; min-width: 0; }
+.pack-editor .consignment-row .btn { min-height: 44px; }
+.index-add-btn { min-width: 64px; }
+
+/* ONE row, scrolling sideways - a new series from a colleague appends at the
+   end without ever wrapping onto a second line (which would push the index
+   row and its Add button down under the user's thumb). The fixed height
+   holds even before the first series exists. */
+.series-buttons {
+  display: flex; flex-wrap: nowrap; gap: 8px; height: 44px; align-items: stretch;
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.series-buttons::-webkit-scrollbar { display: none; }
+.series-buttons:empty::before {
+  content: 'Series you use will show up here'; align-self: center; font-size: 13px; color: var(--text-muted);
+}
+.series-btn {
+  flex: 0 0 auto; min-width: 44px; padding: 0 14px; border-radius: 999px;
+  background: var(--surface-muted); color: var(--ink); border: 1px solid var(--line);
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 15px; font-weight: 600; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.series-btn.is-active { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+/* The status shares the "Index number" label line on purpose - that's the
+   line still visible above the on-screen number pad during continuous entry.
+   Fixed height, one line, so its messages never move the field below. */
+.index-label-line { display: flex; align-items: stretch; gap: 10px; height: 20px; line-height: 20px; min-width: 0; }
+.index-label-line .field-label { flex-shrink: 0; }
+.pack-status {
+  flex: 1; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 13px; font-weight: 600; color: var(--ink-soft);
+}
+.pack-status.is-ok { color: var(--good); }
+.pack-status.is-warn, .pack-status.is-hint { color: var(--warn); }
+.pack-status.is-error { color: var(--bad); }
+
+/* A pack's items as grouped text lines - "J456781-02 ×, 05 ×, 06 × & 09 ×" -
+   one × per index. Each × is a small circle, but its box is 32x32: the
+   background is clipped to the content box, the padding around it is the
+   extra hit area, and negative margins give that space back so the text
+   still reads as one line. The 32px line height keeps two lines' × apart. */
+.pack-item-lines {
+  display: flex; flex-direction: column; font-size: 16px; line-height: 32px; overflow-wrap: anywhere;
+}
+#packItemLines:empty::before {
+  content: 'Items you add show up here.'; font-size: 13px; line-height: 1.4; color: var(--text-muted);
+}
+.pack-item-line { font-weight: 600; color: var(--ink); }
+.item-token { white-space: nowrap; }
+.item-x {
+  box-sizing: content-box; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+  width: 20px; height: 20px; padding: 6px; margin: -6px -4px -6px -2px; border: none; border-radius: 50%;
+  background: rgba(35,31,32,0.12) content-box; color: var(--ink);
+  font-family: inherit; font-size: 15px; font-weight: 600; line-height: 1; cursor: pointer;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.item-x:hover { background-color: rgba(35,31,32,0.24); }
+.item-x:disabled { opacity: 0.4; cursor: default; }
+
+/* The held pack's photos, under its items - one row that scrolls sideways. */
+.pack-photo-strip {
+  display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.pack-photo-strip::-webkit-scrollbar { display: none; }
+.pack-photo-strip:empty { display: none; }
+.pack-photo-strip .thumb { flex: 0 0 72px; width: 72px; height: 72px; }
+
+/* Already sent to Drive (a reopened kit's older photos): can't be removed. */
+.photo-locked {
+  position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 50%;
+  background: rgba(255,255,255,0.88); display: flex; align-items: center; justify-content: center;
+  font-size: 14px; line-height: 1; pointer-events: none;
+}
+
+/* Save Pack + the print controls, directly above Take Photo. wrap-reverse:
+   on a narrow phone, where they can't share a line, the print controls go
+   on the line ABOVE, so Save Pack still sits right over Take Photo. */
+.pack-actions {
+  display: flex; flex-wrap: wrap-reverse; align-items: center; gap: 8px; margin-top: 4px;
+}
+/* flex-basis small enough that Save Pack, the tick and Print share ONE line on
+   phones down to 360px wide ("next to Save Pack"); wrap-reverse is only the
+   fallback for anything narrower. */
+.btn.save-pack-btn { flex: 1 1 96px; min-height: 48px; padding: 12px 10px; background: var(--good); color: #fff; }
+.print-select-short { display: none; }
+@media (max-width: 440px) {
+  .print-select-long { display: none; }
+  .print-select-short { display: inline; }
+  .print-select-all { padding: 0 10px; }
+  .print-selected-btn { padding-left: 10px; padding-right: 10px; }
+}
+.pack-editor .capture-bar { padding: 4px 0 0; }
+
+/* The one set of bulk print controls (kit.js moves it between hosts). */
+.print-controls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; margin-left: auto; }
+.print-select-all {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px;
+  border-radius: 999px; background: var(--surface-muted); color: var(--ink);
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.print-select-all input { width: 20px; height: 20px; margin: 0; accent-color: var(--ink); }
+.print-selected-btn { min-height: 44px; white-space: nowrap; border: 1px solid var(--line); }
+.print-selected-btn:disabled { opacity: 0.5; cursor: default; }
+.print-bar-finalized { display: flex; justify-content: flex-end; padding: 10px 16px 0; }
+
+.kit-mode .uploading-strip .thumb { width: 96px; height: 96px; }
+.upload-retry {
+  position: absolute; left: 4px; right: 4px; bottom: 4px; min-height: 44px;
+  border: none; border-radius: 6px; background: var(--ink); color: #fff;
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.upload-retry:disabled { opacity: 0.45; cursor: default; }
+.upload-failed .spinner { bottom: 48px; }
+.kit-mode .delete-btn { width: 30px; height: 30px; font-size: 17px; }
+.kit-mode .delete-btn::after { content: ''; position: absolute; inset: -7px; }
+
+/* + New Pack with the print controls beside it - or, on a narrow phone,
+   right-aligned on the line under it. */
+.new-pack-bar { padding: 14px 16px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.new-pack-bar .new-pack-main { flex: 1 1 120px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.new-pack-bar .new-pack-btn { width: 100%; padding: 16px 12px; font-size: 17px; white-space: nowrap; }
+.new-pack-next { font-size: 12px; line-height: 1.2; color: var(--ink-soft); text-align: center; }
+/* Keep the print controls level with the button itself, not with button + the line under it. */
+.new-pack-bar { align-items: flex-start; }
+.new-pack-bar .print-controls { min-height: 52px; } /* = the button's height */
+
+.kit-working {
+  margin: 12px 16px 0; font-size: 13px; color: var(--ink-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.kit-report {
+  margin: 12px 16px 0; padding: 12px 14px; background: var(--surface); border-radius: 12px;
+  box-shadow: 0 1px 6px rgba(35,31,32,0.06); display: flex; flex-direction: column; gap: 6px;
+}
+.kit-report-heading {
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 14px; font-weight: 600; margin: 0; color: var(--ink-soft);
+}
+.kit-report-lines { display: flex; flex-direction: column; gap: 4px; }
+.kit-report-line { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.kit-report-line.incomplete { color: var(--bad); font-weight: 700; }
+.kit-report-line.complete { color: var(--good); font-weight: 600; }
+.kit-report-open, .kit-muted { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+
+/* Pack cards reuse .consignment-card's look, as a grid: the main area (Pack N,
+   badge, item lines) on the left; on the right, top to bottom, the
+   collaborators (far right, trimmed with an ellipsis), the tick + 🖨 Print
+   and when it was last printed; the photo preview and count full width
+   underneath. */
+.pack-card {
+  font-family: inherit; color: var(--ink);
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 8px; align-items: start;
+}
+.pack-card.is-mine { box-shadow: 0 0 0 2px var(--ink), 0 1px 6px rgba(35,31,32,0.06); }
+.pack-card.is-selected { background: #eef6ea; }
+.pack-card-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; border-radius: 6px; }
+.pack-card-main:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
+.pack-card-title { flex-shrink: 0; }
+.pack-card-side {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; max-width: min(45vw, 260px);
+}
+.pack-card-collab {
+  max-width: 100%; font-size: 12px; line-height: 18px; color: var(--text-muted); text-align: right;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pack-card-print { display: flex; align-items: center; gap: 2px; cursor: default; }
+.pack-select-wrap {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pack-select { width: 22px; height: 22px; margin: 0; accent-color: var(--ink); cursor: pointer; }
+.pack-select:disabled { cursor: default; }
+.pack-print-btn {
+  min-height: 44px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface-muted); color: var(--ink); white-space: nowrap; cursor: pointer;
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 13px; font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
+}
+.pack-print-btn:disabled { opacity: 0.45; cursor: default; }
+.pack-card-printed { max-width: 100%; font-size: 11px; line-height: 1.3; color: var(--text-muted); text-align: right; }
+.pack-card-foot { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pack-card-badge { align-self: flex-start; }
+.badge-mine { background: var(--good-bg); color: var(--good); }
+.badge-locked { background: var(--ink-soft); color: #fff; }
+.pack-lines { display: flex; flex-direction: column; gap: 2px; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+
+/* Kit dialogs: a flex column capped to the VISIBLE viewport (dvh - on iOS vh
+   is the larger, toolbar-hidden height), only the body scrolls and the footer
+   stays on screen. [open] matters: an author display value would otherwise
+   override the browser's own display:none for a closed <dialog>. */
+.kit-dialog[open] {
+  display: flex; flex-direction: column; overflow: hidden;
+  max-height: 85vh; max-height: 85dvh;
+}
+.kit-dialog .section-dialog-header { position: static; flex-shrink: 0; gap: 10px; }
+.kit-dialog .section-dialog-header h2 { flex-shrink: 0; }
+/* The 32px close button keeps its look but gets a 44px hit area. */
+.kit-dialog .dialog-close { position: relative; }
+.kit-dialog .dialog-close::after { content: ''; position: absolute; inset: -6px; }
+.kit-dialog-collab {
+  flex: 1; min-width: 0; text-align: right; font-size: 12px; opacity: 0.8;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.kit-dialog .section-dialog-body {
+  flex: 1; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain;
+}
+.dialog-notice {
+  flex-shrink: 0; margin: 0 16px 10px; padding: 10px 12px; border-radius: 8px;
+  background: var(--warn-bg); color: var(--warn); font-size: 13px; font-weight: 600; line-height: 1.4;
+}
+.kit-dialog-footer {
+  flex-shrink: 0; padding: 12px 16px 16px; border-top: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.kit-dialog-footer .btn:disabled { opacity: 0.6; cursor: default; }
+.final-question {
+  margin: 0; font-family: 'Jost', 'Work Sans', sans-serif; font-size: 17px; font-weight: 600; text-align: center;
+}
+.final-dialog-actions { display: flex; gap: 10px; }
+
+.kit-submit-bar { align-items: center; }
+.kit-submit-bar .btn { padding: 14px 10px; }
+.kit-submit-bar #finalSubmitBtn { flex: 2; }
+.final-waiting {
+  flex: 2; font-size: 12px; line-height: 1.35; color: var(--text-muted);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* --- Rename a New Store Kit (✏️ next to its name in the topbar) --- */
+.kit-name-line { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+/* The topbar pencil is small by design; the padding gives it a thumb-sized
+   (44px) hit area without making the icon itself bigger. */
+.kit-rename-btn {
+  font-size: 13px; padding: 14px 12px; margin: -14px -8px -14px -4px;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.kit-rename-form input { font-size: 16px; } /* 16px: iOS doesn't zoom the page on focus */
+.kit-rename-form .btn { min-height: 44px; touch-action: manipulation; }
+/* Job number + kit name: two labelled fields, side by side when there's room
+   (the job number only needs ~8 characters), stacked on a narrow phone. */
+.kit-rename-form { align-items: flex-end; }
+.kit-edit-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.kit-edit-job { flex: 0 1 130px; }
+.kit-edit-name { flex: 1 1 200px; }
+.kit-edit-field input { width: 100%; min-width: 0; box-sizing: border-box; }
+.kit-edit-job input { text-transform: uppercase; letter-spacing: 0.02em; }
+.kit-edit-label { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+.kit-edit-actions { display: flex; gap: 8px; margin-left: auto; }
+
+/* Visually hidden, still read by screen readers. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* --- Kit photos that belong to no pack (their own section + buttons) --- */
+.kit-photos {
+  margin: 12px 16px 0; padding: 12px 14px; background: var(--surface); border-radius: 12px;
+  box-shadow: 0 1px 6px rgba(35,31,32,0.06); display: flex; flex-direction: column; gap: 8px;
+}
+.kit-photos-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.kit-photos-heading { font-size: 15px; font-weight: 600; margin: 0; }
+.kit-photos-sub { font-family: 'Work Sans', sans-serif; font-weight: 400; font-size: 13px; color: var(--text-muted); }
+.kit-photos-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.kit-photos-empty { margin: 0; font-size: 13px; color: var(--text-muted); }
+.kit-photo-strip .thumb { flex: 0 0 84px; width: 84px; height: 84px; }
+.kit-capture-bar { padding: 0; }
+.kit-capture-bar .btn { min-height: 48px; padding: 12px 8px; touch-action: manipulation; }
+.kit-uploading-strip { padding: 0; }
+.kit-uploading-strip .thumb { margin-top: 0; }

@@ -1,39 +1,90 @@
 <!doctype html>
-<html lang="en">
+<html lang="en"{% if kit_mode %} class="kit-mode"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <meta name="theme-color" content="#231f20">
+  {% if kit_mode %}
+  <title>{{ kit['kit_name'] }} - {{ session['job_number'] }} - New Store Kit</title>
+  {% else %}
   <title>{{ session['job_number'] }} - Photo Upload</title>
+  {% endif %}
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-left">
-      <a href="/" class="home-link" title="Back to main page">🏠</a>
+      <a href="/" class="home-link"{% if kit_mode %} id="homeLink"{% endif %} title="Back to main page">🏠</a>
       <div>
         <div class="job-edit-wrap">
           <div class="job" id="jobDisplay">{{ session['job_number'] }}</div>
-          {% if not finalized %}
+          {% if not finalized and not kit_mode %}
           <button type="button" class="job-edit-btn" id="jobEditBtn" title="Edit job number">✏️</button>
           {% endif %}
+          {#- A kit's ✏️ sits next to the job number (a long kit name can't push it around) and opens ONE pane for
+              both the job number and the kit name. Only for an OPEN kit - a submitted one is reopened first; its
+              Drive files follow on the next Final Submit. kit.js keeps it in step with every poll. -#}
+          {% if kit_mode and not finalized %}
+          <button type="button" class="job-edit-btn kit-rename-btn" id="kitRenameBtn"
+                  title="Edit job number / kit name" aria-label="Edit the job number and kit name">✏️</button>
+          {% endif %}
         </div>
+        {% if kit_mode %}
+        <div class="who-sub kit-name-line">{{ category_label }} · <span id="kitNameDisplay">{{ kit['kit_name'] }}</span></div>
+        {% else %}
         <div class="who-sub">{{ category_label }}</div>
+        {% endif %}
       </div>
     </div>
     <div class="topbar-right">
+      {% if kit_mode %}
+      <div id="counter" class="counter">{{ kit_state['photoCount'] }} photo(s)</div>
+      {% else %}
       <div id="counter" class="counter">{{ photos|length }} photo(s)</div>
-      {% if not finalized %}
+      {% endif %}
+      {#- A kit that was ever submitted can't be deleted at all (its photos are in Drive) - the server says
+          so through can_delete and the state's canDelete; either one being false hides the button. -#}
+      {% set show_delete = not finalized and can_delete|default(true) %}
+      {% if kit_mode and kit_state['canDelete'] is defined and not kit_state['canDelete'] %}{% set show_delete = false %}{% endif %}
+      {% if show_delete %}
+      {% if kit_mode %}
+      <form method="post" action="/session/{{ session['id'] }}/delete" class="inline-form" id="kitDeleteForm"
+            onsubmit="return confirm('Delete this whole New Store Kit for EVERYONE - all its packs, items and photos? This cannot be undone.');">
+        <button type="submit" class="topbar-delete-btn" title="Delete this kit">🗑️</button>
+      </form>
+      {% else %}
       <form method="post" action="/session/{{ session['id'] }}/delete" class="inline-form"
             onsubmit="return confirm('Delete this entire session and all its photos? This cannot be undone.');">
         <button type="submit" class="topbar-delete-btn" title="Delete this session">🗑️</button>
       </form>
       {% endif %}
+      {% endif %}
       {% include "_user_menu.html" %}
     </div>
   </header>
 
-  {% if not finalized %}
+  {% if kit_mode and not finalized %}
+  {#- Sent by kit.js (POST /api/kit/rename, with job_number when that changed) - no page reload, so an open
+      pack and anything typed stay put. A new job number moves the kit (and its photos) for everyone on it. -#}
+  <form id="kitRenameForm" class="job-edit-form kit-rename-form hidden" novalidate>
+    <div class="kit-edit-field kit-edit-job">
+      <label for="kitJobInput" class="kit-edit-label">Job Number</label>
+      <input type="text" id="kitJobInput" value="{{ session['job_number'] }}" maxlength="7" pattern="[Jj][0-9]{6}"
+             autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="next" placeholder="J456123">
+    </div>
+    <div class="kit-edit-field kit-edit-name">
+      <label for="kitRenameInput" class="kit-edit-label">New Store Kit name</label>
+      <input type="text" id="kitRenameInput" value="{{ kit['kit_name'] }}" maxlength="60" autocomplete="off"
+             autocapitalize="words" enterkeyhint="done" placeholder="New Store Kit name">
+    </div>
+    <div class="kit-edit-actions">
+      <button type="submit" class="btn primary small" id="kitRenameSave">Save</button>
+      <button type="button" class="btn secondary small" id="kitRenameCancel">Cancel</button>
+    </div>
+  </form>
+  {% endif %}
+
+  {% if not finalized and not kit_mode %}
   <form method="post" action="/session/{{ session['id'] }}/edit-job-number" id="jobEditForm" class="job-edit-form hidden">
     <input type="text" name="job_number" id="jobEditInput" value="{{ session['job_number'] }}"
            pattern="[Jj][0-9]{6}" maxlength="7" autocomplete="off" autocapitalize="characters" required>
@@ -42,12 +93,230 @@
   </form>
   {% endif %}
 
+  {% if kit_mode %}
+  {#- "Working now" + the "Packed so far" report sit at the very top, right under the nav bar, so the
+      missing numbers are the first thing every packer sees (kit.js fills and shows them). -#}
+  <div id="kitWorking" class="kit-working hidden"></div>
+
+  <section id="kitReport" class="kit-report hidden" aria-live="polite">
+    <h2 class="kit-report-heading">Packed so far</h2>
+    <div id="kitReportLines" class="kit-report-lines"></div>
+    <div id="kitReportOpen" class="kit-report-open hidden"></div>
+  </section>
+  {% endif %}
+
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, msg in messages %}
       {% if category == 'success' %}<div class="banner done">{{ msg }}</div>
       {% else %}<div class="banner warn">{{ msg }}</div>{% endif %}
     {% endfor %}
   {% endwith %}
+
+  {% if kit_mode %}
+  {#- ===================================================================================================
+      New Store Kit page. Everything below is only the SKELETON - kit.js renders every pack card, item
+      line, series button and report line from kit_state (then from each poll / API response), so the
+      server's first paint only decides which blocks start out visible (editor vs "+ New Pack") and fills
+      in the text a phone would otherwise flash empty for a moment. All user-typed text rendered by kit.js
+      goes in through textContent, never innerHTML.
+      =================================================================================================== -#}
+  {% set ks = kit_state %}
+  {% set held_number = namespace(value=none) %}
+  {% for p in ks['packs'] if p['id'] == ks['heldPackId'] %}{% set held_number.value = p['number'] %}{% endfor %}
+  {% set print_host = 'finalized' if finalized else ('editor' if ks['heldPackId'] else 'newpack') %}
+
+  {#- The ONE set of bulk print controls. kit.js moves this element (it never copies it) to wherever the
+      page's main action lives right now: next to Save Pack while a pack is open, next to + New Pack when
+      not, above the report on a submitted kit. The server renders it straight into that same spot, so
+      the first paint already has it in the right place. -#}
+  {% macro print_controls() -%}
+  <div id="printControls" class="print-controls">
+    <label class="print-select-all" title="Select every pack that has something in it">
+      <input type="checkbox" id="printSelectAll" aria-label="Select all packs">
+      {#- "All" on a narrow phone, so Save Pack + this + Print still fit on one line (see style.css) -#}
+      <span class="print-select-long">Select all</span><span class="print-select-short" aria-hidden="true">All</span>
+    </label>
+    <button type="button" id="printSelectedBtn" class="btn secondary small print-selected-btn" disabled>🖨 Print (0)</button>
+  </div>
+  {%- endmacro %}
+
+  {#- Kit-level messages ("Pack 3 was taken over by Bob.", "Reconnecting…", print results) - fixed at the
+      BOTTOM, just above the Cancel / Final Submit bar, so they're seen wherever the page is scrolled to
+      without ever sitting over the editor header, the inputs or Save Pack (unlike #packStatus, which
+      lives in the editor itself). kit.js lifts it above the on-screen keyboard while that is up. -#}
+  <div id="kitNotice" class="kit-notice{{ ' no-submit-bar' if finalized }} hidden" role="status" aria-live="polite"></div>
+
+  {#- A kit that was submitted before and then reopened: the Drive sheet still shows that last submission
+      until someone presses Final Submit again, and the photos already sent can't be taken back - both
+      are things every packer on it needs to know before they start changing packs. kit.js keeps the text
+      current (and shows/hides it) from each state; × only hides it for this page load. -#}
+  {% if not finalized %}
+  <div id="reopenedBanner" class="banner warn kit-reopened-banner{{ '' if ks['reopened'] else ' hidden' }}" role="note">
+    <span id="reopenedText">↩️ Reopened{% if ks['reopenedBy'] %} by {{ ks['reopenedBy'] }}{% endif %}{% if ks['reopenedAt'] %} on {{ ks['reopenedAt'] }}{% endif %}{% if ks['lastSubmittedAt'] %} — last submitted {{ ks['lastSubmittedAt'] }}{% endif %}. Photos already sent to Drive can't be removed. Press Final Submit when you're done to update the Drive sheet.</span>
+    <button type="button" id="reopenedDismiss" class="banner-dismiss" aria-label="Hide this note">×</button>
+  </div>
+  {% endif %}
+
+  {% if finalized %}
+  <div class="banner done kit-finalized-banner">
+    <div>✅ Submitted by {{ ks['finalizedBy'] or kit['finalized_by'] or 'a collaborator' }}{% if ks['finalizedAt'] %} on {{ ks['finalizedAt'] }}{% endif %}.{% if ks['submitCount'] and ks['submitCount'] > 1 %} (Submitted {{ ks['submitCount'] }} times.){% endif %}</div>
+    {#- Anyone may reopen a submitted kit to change it (rev 5) - nothing already in Drive is deleted by
+        that, and the next Final Submit rewrites the kit's Pack Log sheet with the changes. -#}
+    <form method="post" action="/session/{{ session['id'] }}/reopen" id="kitReopenForm" class="kit-reopen-form">
+      <button type="submit" id="kitReopenBtn" class="btn primary small">↩️ Reopen to make changes</button>
+    </form>
+    <div class="kit-reopen-hint">Photos already in Drive stay there. Press Final Submit again when you're done to update the Drive sheet - or go <a href="/">back</a> to start another kit.</div>
+  </div>
+  <div id="printBarFinalized" class="print-bar-finalized">
+    {{ print_controls() }}
+  </div>
+  {% else %}
+  <section id="packEditor" class="consignment-bar pack-editor{{ '' if ks['heldPackId'] else ' hidden' }}" aria-label="Pack editor">
+    <div class="pack-editor-header">
+      <h2 id="packEditorTitle">Editing Pack {{ held_number.value if held_number.value is not none else '' }}</h2>
+    </div>
+
+    <label for="seriesInput" class="field-label">Job Number</label>
+    <div class="consignment-row">
+      <input type="text" id="seriesInput" autocomplete="off" autocorrect="off" spellcheck="false"
+             autocapitalize="characters" enterkeyhint="next" placeholder="J456123 or item description">
+      <button type="button" id="addNoIndexBtn" class="btn secondary small hidden">Add as-is</button>
+    </div>
+
+    {#- One row that scrolls sideways - a colleague adding a new series must never push the index row
+        (and its Add button) down under the user's thumb. -#}
+    <div id="seriesButtons" class="series-buttons" aria-label="Series used in this kit"></div>
+
+    <div class="index-label-line">
+      <label for="indexInput" class="field-label">Index number</label>
+      <span id="packStatus" class="pack-status" aria-live="polite"></span>
+    </div>
+    {#- Digits only (kit.js strips anything else as it's typed or pasted, and caps it at the 6 digits
+        the server takes; the server refuses anything else too). No maxlength: the browser would cut a
+        paste to 6 characters BEFORE the non-digits are dropped, leaving the wrong digits. -#}
+    <div class="consignment-row">
+      <input type="text" id="indexInput" inputmode="numeric" pattern="[0-9]*" enterkeyhint="enter"
+             autocomplete="off" placeholder="e.g. 02">
+      <button type="button" id="indexAddBtn" class="btn primary small index-add-btn">Add</button>
+    </div>
+
+    {#- The pack's items as the same grouped lines the card and the label show ("J456781-02, 05 & 09"),
+        each index with its own × - then the photos already attached, so the packer sees both without
+        leaving the editor. -#}
+    <div id="packItemLines" class="pack-item-lines" aria-label="Items in this pack"></div>
+    <div id="packPhotoStrip" class="pack-photo-strip" aria-label="Photos in this pack"></div>
+
+    {#- Save Pack sits directly above Take Photo - the last thing done to a pack, next to the thing done
+        most - with the bulk print controls beside it. -#}
+    <div id="packActions" class="pack-actions">
+      <button type="button" id="savePackBtn" class="btn primary save-pack-btn">Save Pack</button>
+      {% if print_host == 'editor' %}{{ print_controls() }}{% endif %}
+    </div>
+
+    <div class="capture-bar pack-capture-bar">
+      <label class="btn primary" id="cameraLabel">
+        📸 Take Photo
+        <input type="file" accept="image/*" capture="environment" id="cameraInput" class="hidden">
+      </label>
+      <label class="btn secondary" id="libraryLabel">
+        🖼️ Choose Photos
+        <input type="file" accept="image/*" multiple id="libraryInput" class="hidden">
+      </label>
+    </div>
+  </section>
+  {#- Directly under the editor rather than inside it: a photo that failed to upload keeps its tile (and
+      its Retry button, disabled until a pack is held again) even after the editor has closed. -#}
+  <div id="uploadingStrip" class="uploading-strip"></div>
+
+  <div id="newPackBar" class="new-pack-bar{{ ' hidden' if ks['heldPackId'] else '' }}">
+    <div class="new-pack-main">
+      <button type="button" id="newPackBtn" class="btn primary new-pack-btn" aria-describedby="newPackNext">+ New Pack</button>
+      <div id="newPackNext" class="new-pack-next">Next: Pack {{ ks['nextPackNumber'] }}</div>
+    </div>
+    {% if print_host == 'newpack' %}{{ print_controls() }}{% endif %}
+  </div>
+  {% endif %}
+
+  {#- Photos that belong to NO pack - the whole kit, a pallet, a delivery note (no reservation involved).
+      Hidden while this person has a pack open - the editor's own Take Photo is for that pack - and shown
+      again once the pack is saved. kit.js fills the strip from state.generalPhotos; on a submitted kit the
+      section only shows if it has photos. -#}
+  <section id="kitPhotos" class="kit-photos{{ ' hidden' if (finalized and not ks['generalPhotos']) or (not finalized and ks['heldPackId']) else '' }}"
+           aria-labelledby="kitPhotosHeading">
+    <div class="kit-photos-head">
+      <h2 id="kitPhotosHeading" class="kit-photos-heading">Kit photos <span class="kit-photos-sub">(not in a pack)</span></h2>
+      <span id="kitPhotosCount" class="kit-photos-count"></span>
+    </div>
+    <div id="kitPhotoStrip" class="pack-photo-strip kit-photo-strip" aria-label="Kit photos not in any pack"></div>
+    <p id="kitPhotosEmpty" class="kit-photos-empty{{ ' hidden' if finalized else '' }}">For photos that don't belong to one pack - the whole kit, a pallet, a delivery note.</p>
+    {% if not finalized %}
+    <div id="kitCaptureBar" class="capture-bar kit-capture-bar">
+      <label class="btn secondary" id="kitCameraLabel">
+        📸 Take Photo
+        <input type="file" accept="image/*" capture="environment" id="kitCameraInput" class="hidden">
+      </label>
+      <label class="btn secondary" id="kitLibraryLabel">
+        🖼️ Choose Photos
+        <input type="file" accept="image/*" multiple id="kitLibraryInput" class="hidden">
+      </label>
+    </div>
+    <div id="kitUploadingStrip" class="uploading-strip kit-uploading-strip"></div>
+    {% endif %}
+  </section>
+
+  <div id="packList" class="sections pack-list"></div>
+
+  <dialog id="packDialog" class="section-dialog kit-dialog">
+    <div class="section-dialog-header">
+      <h2 id="packDialogTitle"></h2>
+      <span id="packDialogCollab" class="kit-dialog-collab"></span>
+      <button type="button" id="packDialogClose" class="dialog-close" aria-label="Close">×</button>
+    </div>
+    <div class="section-dialog-body kit-dialog-body">
+      {#- Plain lines for a pack someone else has (or nobody has) open; the same grouped lines with a ×
+          per index, like the editor's, for the viewer's own pack. -#}
+      <div id="packDialogLines" class="pack-lines"></div>
+      <div id="packDialogItemLines" class="pack-item-lines hidden"></div>
+      <div id="packDialogGallery" class="gallery section-dialog-gallery"></div>
+      <div id="packDialogMeta" class="kit-muted"></div>
+    </div>
+    <div id="packDialogNotice" class="dialog-notice hidden" role="status" aria-live="polite"></div>
+    {% if not finalized %}
+    <div class="kit-dialog-footer">
+      <button type="button" id="packDialogEdit" class="btn primary full">Edit this pack</button>
+    </div>
+    {% endif %}
+  </dialog>
+
+  {% if not finalized %}
+  <div class="submit-bar kit-submit-bar">
+    <a href="/" class="btn secondary" id="cancelLink">Cancel</a>
+    <button type="button" id="finalSubmitBtn" class="btn primary hidden">Final Submit</button>
+    <div id="finalWaiting" class="final-waiting">{{ ks['finalizeBlockedReason'] or '' }}</div>
+  </div>
+
+  <dialog id="finalDialog" class="section-dialog kit-dialog">
+    <div class="section-dialog-header">
+      <h2>Final Submit</h2>
+      <button type="button" id="finalDialogClose" class="dialog-close" aria-label="Close">×</button>
+    </div>
+    <div class="section-dialog-body kit-dialog-body">
+      <div class="kit-report-heading">Packed so far</div>
+      <div id="finalDialogReport" class="kit-report-lines"></div>
+      <p id="finalDialogEmpty" class="kit-muted hidden"></p>
+      <p id="finalDialogResubmit" class="kit-muted{{ '' if ks['submitCount'] else ' hidden' }}">This kit was submitted before - Yes sends the new photos and rewrites its Drive sheet with everything shown here.</p>
+    </div>
+    <div id="finalDialogNotice" class="dialog-notice hidden" role="status" aria-live="polite"></div>
+    <div class="kit-dialog-footer">
+      <p class="final-question">Is this packed completely?</p>
+      <div class="final-dialog-actions">
+        <button type="button" id="finalNoBtn" class="btn secondary" autofocus>No</button>
+        <button type="button" id="finalYesBtn" class="btn primary">Yes</button>
+      </div>
+    </div>
+  </dialog>
+  {% endif %}
+  {% else %}
 
   {% if resumed_count %}
   <div class="banner done">📥 Resumed {{ resumed_count }} existing consignment(s) for this job from Google Drive.</div>
@@ -120,6 +389,7 @@
     <button id="submitBtn" class="btn primary">Submit Batch</button>
   </div>
   {% endif %}
+  {% endif %}
 
   <script id="pageData"
           data-session-id='{{ session["id"]|tojson }}'
@@ -127,7 +397,11 @@
           data-consignment-logging='{{ consignment_logging|default(false)|tojson }}'
           data-initial-sections='{{ sections_json|default([])|tojson }}'
           data-finalized='{{ finalized|default(false)|tojson }}'
-          data-consignment-values='{{ consignment_values|default([])|tojson }}'></script>
+          data-consignment-values='{{ consignment_values|default([])|tojson }}'{% if kit_mode %}
+          data-kit-mode='{{ kit_mode|tojson }}'
+          data-kit-state='{{ kit_state|tojson }}'
+          data-kit-poll-ms='{{ kit_poll_ms|default(4000)|tojson }}'
+          data-reopened-notice='{{ (reopened_notice|default(false) and not get_flashed_messages())|tojson }}'{% endif %}></script>
   <script>
     var pageData = document.getElementById('pageData').dataset;
     window.SESSION_ID = JSON.parse(pageData.sessionId);
@@ -153,7 +427,11 @@
       }
     })();
   </script>
+  {% if kit_mode %}
+  <script src="/static/kit.js"></script>
+  {% else %}
   <script src="/static/upload.js"></script>
+  {% endif %}
   <script src="/static/topbar.js"></script>
 </body>
 </html>

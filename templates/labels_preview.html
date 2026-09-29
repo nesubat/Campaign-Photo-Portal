@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#231f20">
+  <title>{{ kit['kit_name'] }} - {{ session['job_number'] }} - Pack labels</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    /* Screen only: the labels sit on a grey desk at their real size (mm), one
+       under the other; a label wider than a phone scrolls inside its frame
+       rather than widening the whole page. */
+    .labels-toolbar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 16px 0; }
+    .labels-info { margin: 8px 16px 0; font-size: 14px; color: var(--text-muted); }
+    .labels-info strong { color: var(--ink); }
+    .labels-note { margin: 12px 16px 0; }
+    .labels-desk { background: #e9e6e2; margin: 16px 0 0; padding: 16px; }
+    .label-frame { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 auto 16px; max-width: 100%; }
+    .label-frame .nsk-label { margin: 0 auto; box-shadow: 0 2px 10px rgba(35,31,32,0.25); }
+    .label-frame .nsk-label + .nsk-label { margin-top: 16px; }
+    .labels-zpl { margin: 16px; }
+    .labels-zpl summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+    .labels-zpl pre { background: var(--surface-muted); padding: 12px; border-radius: 8px; overflow-x: auto;
+                      font-size: 12px; line-height: 1.4; white-space: pre; }
+    .labels-empty { margin: 24px 16px; }
+    @media print {
+      /* Printing this page prints the labels only, edge to edge - each label
+         is exactly one @page (see labels.to_html). */
+      .no-print { display: none !important; }
+      html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+      .labels-desk { background: none; margin: 0; padding: 0; }
+      .label-frame { overflow: visible; margin: 0; max-width: none; }
+      .label-frame .nsk-label, .label-frame .nsk-label + .nsk-label { margin: 0; box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar no-print">
+    <div class="topbar-left">
+      <a href="{{ back_url }}" class="home-link" title="Back to the kit">←</a>
+      <div>
+        <div class="job">{{ session['job_number'] }}</div>
+        <div class="who-sub">Pack labels · {{ kit['kit_name'] }}</div>
+      </div>
+    </div>
+    {% include "_user_menu.html" %}
+  </header>
+
+  <div class="labels-toolbar-row no-print">
+    <a href="{{ back_url }}" class="btn secondary small">Back to the kit</a>
+    {% if label_count %}
+    <button type="button" class="btn primary small" id="printPageBtn">🖨 Print this page</button>
+    {% endif %}
+  </div>
+
+  <p class="labels-info no-print">
+    {% if label_count %}
+    <strong>{{ label_count }} label{{ '' if label_count == 1 else 's' }}</strong>
+    for Pack{{ '' if pack_numbers|length == 1 else 's' }} {{ pack_numbers|join(', ') }}
+    · {{ size_text }}
+    {% else %}
+    Label size {{ size_text }}
+    {% endif %}
+    {% if skipped %}<br>Skipped (empty): Pack{{ '' if skipped|length == 1 else 's' }} {{ skipped|join(', ') }}{% endif %}
+    {% if unknown %}<br>{{ unknown|length }} selected pack(s) no longer exist.{% endif %}
+  </p>
+
+  {% if not printer_configured %}
+  <div class="banner warn labels-note no-print">
+    No label printer is configured on the server yet (LABEL_PRINTER_NAME in .env), so this preview is
+    shown instead. Print it from a computer onto the label stock, or ask for the printer to be set up.
+  </div>
+  {% else %}
+  <p class="labels-info no-print">Label printer: <strong>{{ printer_name }}</strong> - the kit page's Print button
+    sends these straight to it.</p>
+  {% endif %}
+
+  {% if error %}
+  <div class="banner warn labels-note no-print">{{ error }}</div>
+  {% endif %}
+
+  {% if label_count %}
+  <div class="labels-desk">
+    <div class="label-frame">
+      {{ label_html|safe }}
+    </div>
+  </div>
+
+  <details class="labels-zpl no-print">
+    <summary>ZPL sent to the printer</summary>
+    <pre>{{ zpl }}</pre>
+  </details>
+  {% elif not error %}
+  <p class="labels-empty no-print">Nothing to print - the selected packs are empty.</p>
+  {% endif %}
+
+  <script src="/static/topbar.js"></script>
+  <script>
+    (function () {
+      var btn = document.getElementById('printPageBtn');
+      if (btn) {
+        btn.addEventListener('click', function () { window.print(); });
+      }
+    })();
+  </script>
+</body>
+</html>

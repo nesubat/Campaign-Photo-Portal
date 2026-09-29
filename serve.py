@@ -28,6 +28,7 @@ import time
 import auth
 import db
 import drive_sync
+import labels
 import local_cleanup
 from app import app
 from config import HOST, PORT, WAITRESS_THREADS, load_drive_config
@@ -143,6 +144,10 @@ if __name__ == "__main__":
             ".env.example). Photos will save locally only until you deploy "
             "apps-script/DriveUploader.gs and fill that file in."
         )
+    # Which label printer Print will use (or that it will show a preview) -
+    # and, since the name has to match Windows' exactly, what's installed.
+    for line in labels.startup_lines():
+        print(line)
     drive_sync.start_background_sync()
     local_cleanup.start_background_cleanup()
 
