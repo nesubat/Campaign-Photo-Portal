@@ -160,6 +160,11 @@ sequenceDiagram
     Note over Phone: Photo appears in the gallery/card\nimmediately — nothing here waits on Drive.
 ```
 
+The phone side is a queue on both kinds of page: `upload.js` (Packing/Dispatch) and `kit.js` (New Store
+Kits) send two photos at a time and retry after a connection problem, so a dropped Wi-Fi connection or a
+portal restart delays photos rather than losing them (see `static/upload.js` below). Once a photo is saved
+here it can't be lost on the way to Drive: see §3.4 and §8.
+
 ### 3.4 Background Drive sync (one tick, every `DRIVE_SYNC_INTERVAL_SEC`)
 
 ```mermaid
@@ -459,12 +464,39 @@ Two mutually exclusive modes share one submit-button handler at the bottom:
   scanning/typing a Consignment #/Store name (`resolveConsignment`, with live autocomplete via
   `updateSuggestions`/`hideSuggestions`) and Item IDs (`addItemId`, `stepItemId` for the +/- scan-count
   chips built by `buildChip`).
-- **Flat mode** (no logging): one plain photo grid, unchanged from the original simple behavior
-  (`addPlaceholder`, inline delete handling).
+- **Flat mode** (no logging): one plain photo grid (inline delete handling).
 
-Shared: `handleFiles`/`uploadOne` (per-mode) for the actual `/api/upload` call, `setCaptureEnabled` to
-gray out the camera/library buttons until a consignment is resolved, and the Submit handler that blocks
-on any still-uploading photo before calling `/api/finalize`.
+Each mode only supplies `uploadHooks` (`placeTile`, `onSaved`, `addFields`, `countSaved`). The **upload
+queue** is shared, and it exists because the load tests showed the old way (every picked photo fired at
+once, no timeout, no retry) lost photos whenever a phone's connection dropped mid-batch. A 100-photo pick
+takes ~18 min over a busy hotspot; a 10 s portal restart failed 221 queued photos within 0.8 s, and every
+dropped connection lost its photo (32 of 32). Now:
+
+- `handleFiles` → `addToQueue` → `pump` → `sendJob` (XMLHttpRequest, for upload progress):
+  at most `MAX_PARALLEL_UPLOADS` (2) at once, the rest wait in order. The consignment a photo belongs to
+  is fixed when it's PICKED (`addFields`), so scanning the next consignment mid-batch can't move it.
+- A **connection problem** (network error, a dropped connection, a 5xx or a non-JSON answer, or a stall:
+  no upload progress for `STALL_MS` 60 s, or no answer `ANSWER_WAIT_MS` 90 s after the photo was fully
+  sent) never fails a photo: it goes back to the front of the queue and the whole queue pauses for
+  `RETRY_DELAYS_S` (2, 5, 10, 20, 30, then 60 s, for as long as the page is open), or resumes at once on
+  the browser's `online` event or when the page becomes visible again. There's no fixed time limit, so a
+  big photo on a slow link is never cut off while it's still moving.
+- Only a clear **refusal** (JSON `ok:false`, e.g. "This batch was already submitted") fails a photo:
+  its tile shows the photo itself (an object URL) with **Retry** and **×**.
+- A redirect to `/login` (logged out elsewhere) pauses the queue with "Log in (new tab) → Try again".
+- `#uploadStatus` says how far the pick has got, or that photos are waiting ("nothing is lost");
+  `beforeunload` asks before leaving while anything is waiting or failed; **Submit** waits for both.
+- A photo that dies with the page (tab closed, browser killed) is still gone: a library pick can be picked
+  again, but a **Take Photo** shot may exist only in that page. That's why the page says to keep it open.
+- A retry after a connection that dropped *just after* the portal saved the photo can store it twice
+  (the portal has no upload id to recognise a repeat). Rare, visible and removable; accepted by the
+  owner rather than risking a lost photo.
+- Tested in `scratchpad/e2e/upload_queue_e2e.mjs`: Wi-Fi off for 8 s and a portal kill + restart in one
+  30-photo batch (30/30 saved, 0 duplicates, ≤ 2 in flight), a consignment switch mid-batch, a refusal +
+  Retry, a logout mid-batch, and the leave-page prompt.
+
+Also shared: `setCaptureEnabled` (camera/library greyed out until a consignment is resolved) and the
+Submit handler (`/api/finalize`).
 
 ### `static/kit.js` — the New Store Kit page (loaded INSTEAD of upload.js in kit mode)
 

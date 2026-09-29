@@ -354,6 +354,9 @@
       <input type="file" accept="image/*" multiple id="libraryInput" class="hidden">
     </label>
   </div>
+  {#- upload.js's queue says here how far a pick has got ("Uploading - 37 of 100 photo(s) saved"), and when
+      the connection drops that the photos are waiting, not lost ("Trying again in 10 s"). -#}
+  <div id="uploadStatus" class="upload-status hidden" role="status" aria-live="polite"></div>
   {% endif %}
 
   {% if consignment_logging %}

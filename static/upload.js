@@ -4,16 +4,20 @@
   var cameraInput = document.getElementById('cameraInput');
   var libraryInput = document.getElementById('libraryInput');
   var submitBtn = document.getElementById('submitBtn');
+  var uploadStatus = document.getElementById('uploadStatus');
 
   var consignmentLogging = !!window.CONSIGNMENT_LOGGING;
   var finalized = !!window.FINALIZED;
 
-  // Assigned inside whichever mode block below runs; kept as plain vars
-  // (not globals) so both modes share the same submit-button wiring at the
-  // bottom without duplicating it.
-  var uploadOne = function () {};
-  var getBusyCount = function () { return 0; };
-  var getTotalCount = function () { return 0; };
+  // Filled in by whichever mode block below runs (grouped or flat): where a
+  // photo's tile goes while it uploads, what happens once it's saved, and
+  // what extra fields the upload carries. The upload queue itself is shared.
+  var uploadHooks = {
+    placeTile: function () {},
+    onSaved: function () {},
+    addFields: function () {},
+    countSaved: function () { return 0; },
+  };
 
   function setCaptureEnabled(enabled) {
     if (cameraInput) cameraInput.disabled = !enabled;
@@ -24,9 +28,333 @@
     });
   }
 
+  // ==========================================================================
+  // Upload queue (shared by both modes)
+  //
+  // A pick of 50-100 photos can take 15-20 minutes to send over a busy
+  // hotspot, and anything that cuts the phone off in that time - the Wi-Fi
+  // dropping, walking out of range, the portal PC restarting - used to fail
+  // every photo still waiting, for good, with nothing saying which ones. So:
+  //   * at most MAX_PARALLEL_UPLOADS go at once; the rest wait here, in order;
+  //   * a connection problem (no answer, a dropped or stalled connection, a
+  //     5xx) never fails a photo: it goes back to the front of the queue and
+  //     the WHOLE queue pauses and tries again after 2 s, 5 s, 10 s, 20 s,
+  //     30 s, then every 60 s - for as long as the page stays open - or at
+  //     once when the phone says it's back online;
+  //   * only a clear refusal from the portal (e.g. "This batch was already
+  //     submitted") fails a photo; its tile then shows that photo, with Retry
+  //     and x, so it's obvious which one it was;
+  //   * a stalled upload is spotted by its progress stopping (STALL_MS), not
+  //     by a fixed time limit, so a big photo on a slow link is never cut
+  //     off while it's still moving;
+  //   * Submit waits for the queue, and leaving the page asks first.
+  // ==========================================================================
+  var MAX_PARALLEL_UPLOADS = 2;
+  var STALL_MS = 60000;          // no upload progress for this long: the connection is gone
+  var ANSWER_WAIT_MS = 90000;    // the photo is fully sent: how long to wait for the portal's answer
+  var RETRY_DELAYS_S = [2, 5, 10, 20, 30, 60];
+
+  var queue = [];                // jobs waiting to be sent; the front goes next
+  var active = 0;                // jobs being sent right now
+  var failedJobs = [];           // refused by the portal - waiting for Retry or x
+  var connFailures = 0;          // connection problems in a row (reset by any success)
+  var pausedUntil = 0;           // no new sends before this time (ms)
+  var pauseTimer = null;
+  var loggedOut = false;         // the portal answered with its login page: wait for "Try again"
+  var batchTotal = 0;            // photos picked since the queue was last empty...
+  var batchDone = 0;             // ...and how many of them are saved
+  var unloadGuardOn = false;
+
+  function pendingCount() { return queue.length + active; }
+
   function handleFiles(fileList) {
-    Array.prototype.forEach.call(fileList, function (file) { uploadOne(file); });
+    Array.prototype.forEach.call(fileList, function (file) { addToQueue(file); });
+    pump();
   }
+
+  function addToQueue(file) {
+    if (pendingCount() === 0 && failedJobs.length === 0) { batchTotal = 0; batchDone = 0; }
+    var job = { file: file, tile: document.createElement('div'), previewUrl: null, fields: {} };
+    uploadHooks.addFields(job);    // e.g. the consignment it was picked for - fixed NOW, not when it's sent
+    uploadHooks.placeTile(job);
+    paintQueued(job);
+    queue.push(job);
+    batchTotal++;
+    refresh();
+  }
+
+  function pump() {
+    if (loggedOut) { refresh(); return; }
+    var wait = pausedUntil - Date.now();
+    if (wait > 0) {
+      if (!pauseTimer) pauseTimer = setTimeout(function () { pauseTimer = null; pump(); }, wait);
+      refresh();
+      return;
+    }
+    while (active < MAX_PARALLEL_UPLOADS && queue.length) sendJob(queue.shift());
+    refresh();
+  }
+
+  function resumeNow() {
+    pausedUntil = 0;
+    if (pauseTimer) { clearTimeout(pauseTimer); pauseTimer = null; }
+    pump();
+  }
+
+  function sendJob(job) {
+    active++;
+    paintSending(job, 0);
+    var xhr = new XMLHttpRequest();
+    var fd = new FormData();
+    fd.append('session_id', window.SESSION_ID);
+    fd.append('file', job.file);
+    Object.keys(job.fields).forEach(function (k) { fd.append(k, job.fields[k]); });
+
+    var lastProgress = Date.now();
+    var sent = false;
+    var done = false;
+    var watchdog = setInterval(function () {
+      // A hidden page's timers and network can be frozen by the phone -
+      // that's not a stalled connection, so don't hold it against the upload.
+      if (document.hidden) { lastProgress = Date.now(); return; }
+      var idle = Date.now() - lastProgress;
+      if ((!sent && idle > STALL_MS) || (sent && idle > ANSWER_WAIT_MS)) {
+        finish('connection', null);
+        try { xhr.abort(); } catch (e) { /* already gone */ }
+      }
+    }, 5000);
+
+    function finish(kind, data) {
+      if (done) return;
+      done = true;
+      clearInterval(watchdog);
+      active--;
+      if (kind === 'saved') {
+        connFailures = 0;
+        batchDone++;
+        forgetPreview(job);
+        uploadHooks.onSaved(job, data);
+      } else if (kind === 'refused') {
+        connFailures = 0;
+        failedJobs.push(job);
+        paintFailed(job, (data && data.error) || 'The portal refused this photo.');
+      } else {
+        // 'connection' or 'logged_out': the photo goes back to the front of
+        // the queue, untouched, and the queue waits.
+        queue.unshift(job);
+        paintQueued(job, kind === 'logged_out' ? 'Waiting for login' : 'Waiting to retry');
+        if (kind === 'logged_out') {
+          loggedOut = true;
+        } else if (Date.now() >= pausedUntil) {
+          // Only the first failure of an outage lengthens the wait - the
+          // other photo that was in flight at the same moment doesn't.
+          var delay = RETRY_DELAYS_S[Math.min(connFailures, RETRY_DELAYS_S.length - 1)];
+          connFailures++;
+          pausedUntil = Date.now() + delay * 1000;
+        }
+      }
+      // Next turn, not now: this request (still inside its own load/error
+      // event) finishes closing first, so there are never more than
+      // MAX_PARALLEL_UPLOADS connections open at once.
+      setTimeout(pump, 0);
+    }
+
+    xhr.upload.onprogress = function (e) {
+      lastProgress = Date.now();
+      if (e.lengthComputable && e.total) paintSending(job, e.loaded / e.total);
+    };
+    xhr.upload.onload = function () { sent = true; lastProgress = Date.now(); paintSending(job, 1); };
+    xhr.onload = function () {
+      // A login that ran out: the portal redirects to its login page, which
+      // the browser follows - the photo isn't refused, it just has to wait.
+      if (/\/login(?:[?#]|$)/.test(xhr.responseURL || '')) { finish('logged_out', null); return; }
+      var data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (e) { data = null; }
+      if (!data || xhr.status >= 500 || xhr.status === 0) { finish('connection', null); return; }
+      finish(data.ok ? 'saved' : 'refused', data);
+    };
+    xhr.onerror = function () { finish('connection', null); };
+    xhr.onabort = function () { finish('connection', null); };
+    xhr.open('POST', '/api/upload');
+    xhr.send(fd);
+  }
+
+  // --- Tiles ------------------------------------------------------------------
+  function paintQueued(job, label) {
+    var tile = job.tile;
+    tile.className = 'thumb uploading';
+    tile.removeAttribute('title');
+    tile.innerHTML = '';
+    var spin = document.createElement('span');
+    spin.className = 'spinner';
+    spin.textContent = label ? '↻' : '⏳';
+    tile.appendChild(spin);
+    if (label) {
+      var note = document.createElement('span');
+      note.className = 'upload-progress';
+      note.textContent = label;
+      tile.appendChild(note);
+      tile.title = label;
+    }
+  }
+
+  function paintSending(job, fraction) {
+    var tile = job.tile;
+    var note = tile.querySelector('.upload-progress');
+    if (!tile.classList.contains('sending')) {
+      tile.className = 'thumb uploading sending';
+      tile.removeAttribute('title');
+      tile.innerHTML = '';
+      var spin = document.createElement('span');
+      spin.className = 'spinner';
+      spin.textContent = '⏳';
+      tile.appendChild(spin);
+      note = document.createElement('span');
+      note.className = 'upload-progress';
+      tile.appendChild(note);
+    }
+    note.textContent = Math.round(fraction * 100) + '%';
+  }
+
+  function paintFailed(job, message) {
+    var tile = job.tile;
+    tile.className = 'thumb error upload-failed';
+    tile.title = message;
+    tile.innerHTML = '';
+    // The photo itself, so it's clear WHICH one didn't make it.
+    try {
+      if (!job.previewUrl && window.URL && URL.createObjectURL) job.previewUrl = URL.createObjectURL(job.file);
+    } catch (e) { job.previewUrl = null; }
+    if (job.previewUrl) {
+      var img = document.createElement('img');
+      img.src = job.previewUrl;
+      img.alt = '';
+      img.decoding = 'async';
+      tile.appendChild(img);
+    }
+    var icon = document.createElement('span');
+    icon.className = 'spinner';
+    icon.textContent = '⚠️';
+    tile.appendChild(icon);
+
+    var retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'upload-retry';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dropFailed(job);
+      paintQueued(job);
+      queue.push(job);
+      resumeNow();
+    });
+    tile.appendChild(retry);
+
+    var discard = document.createElement('button');
+    discard.type = 'button';
+    discard.className = 'delete-btn upload-discard';
+    discard.textContent = '×';
+    discard.title = 'Leave this photo out';
+    discard.setAttribute('aria-label', 'Leave this photo out');
+    discard.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!confirm('Leave this photo out? It hasn\'t been uploaded.')) return;
+      dropFailed(job);
+      forgetPreview(job);
+      if (job.tile.parentNode) job.tile.parentNode.removeChild(job.tile);
+      batchTotal = Math.max(batchDone, batchTotal - 1);
+      refresh();
+    });
+    tile.appendChild(discard);
+  }
+
+  function dropFailed(job) {
+    var i = failedJobs.indexOf(job);
+    if (i !== -1) failedJobs.splice(i, 1);
+  }
+
+  function forgetPreview(job) {
+    if (job.previewUrl) {
+      try { URL.revokeObjectURL(job.previewUrl); } catch (e) { /* ignore */ }
+      job.previewUrl = null;
+    }
+  }
+
+  // --- The status line above the photos -----------------------------------------
+  function statusButton(label, onClick, href) {
+    var el = document.createElement(href ? 'a' : 'button');
+    el.className = 'upload-status-btn';
+    el.textContent = label;
+    if (href) {
+      el.href = href;
+      el.target = '_blank';
+      el.rel = 'noopener';
+    } else {
+      el.type = 'button';
+      el.addEventListener('click', onClick);
+    }
+    return el;
+  }
+
+  function refresh() {
+    updateUnloadGuard();
+    if (counter) counter.textContent = uploadHooks.countSaved() + ' photo(s)';
+    if (!uploadStatus) return;
+    var pending = pendingCount();
+    var failed = failedJobs.length;
+    uploadStatus.innerHTML = '';
+    uploadStatus.className = 'upload-status';
+    var text = document.createElement('span');
+    uploadStatus.appendChild(text);
+    if (loggedOut && pending) {
+      uploadStatus.classList.add('warn');
+      text.textContent = 'You\'ve been logged out, so ' + pending + ' photo(s) are waiting - nothing is lost. ' +
+        'Log in again in a new tab, then come back and tap Try again.';
+      uploadStatus.appendChild(statusButton('Log in', null, '/login'));
+      uploadStatus.appendChild(statusButton('Try again', function () { loggedOut = false; resumeNow(); }));
+    } else if (pending && pausedUntil > Date.now()) {
+      uploadStatus.classList.add('warn');
+      var secs = Math.max(1, Math.round((pausedUntil - Date.now()) / 1000));
+      text.textContent = 'Connection problem - ' + pending + ' photo(s) waiting, nothing is lost. ' +
+        'Trying again in ' + secs + ' s. Keep this page open.';
+      uploadStatus.appendChild(statusButton('Try now', resumeNow));
+      if (!refresh.tick) refresh.tick = setTimeout(function () { refresh.tick = null; refresh(); }, 1000);
+    } else if (pending) {
+      text.textContent = 'Uploading - ' + batchDone + ' of ' + batchTotal + ' photo(s) saved. ' +
+        'Keep this page open until it finishes.';
+    } else if (failed) {
+      uploadStatus.classList.add('warn');
+      text.textContent = failed + ' photo(s) didn\'t upload - tap Retry on them, or × to leave them out.';
+    } else {
+      uploadStatus.classList.add('hidden');
+    }
+  }
+
+  function onBeforeUnload(e) {
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  }
+
+  // Only registered while something is waiting: a standing beforeunload
+  // listener keeps some browsers from using the back/forward cache.
+  function updateUnloadGuard() {
+    var want = pendingCount() > 0 || failedJobs.length > 0;
+    if (want && !unloadGuardOn) {
+      window.addEventListener('beforeunload', onBeforeUnload);
+      unloadGuardOn = true;
+    } else if (!want && unloadGuardOn) {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      unloadGuardOn = false;
+    }
+  }
+
+  window.addEventListener('online', function () { if (queue.length) resumeNow(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && queue.length && !loggedOut) resumeNow();
+  });
 
   if (cameraInput) {
     cameraInput.addEventListener('change', function () {
@@ -71,7 +399,6 @@
     var activeConsignmentId = null; // which section new photos get tagged to
     var resolvedValue = null;
     var openDialogConsignmentId = null; // which section the popup is currently showing, if any
-    var pendingUploads = 0;
 
     function totalPhotoCount() {
       var n = 0;
@@ -479,45 +806,36 @@
     });
     renderSections();
 
-    uploadOne = function (file) {
-      var placeholder = document.createElement('div');
-      placeholder.className = 'thumb uploading';
-      placeholder.innerHTML = '<span class="spinner">⏳</span>';
-      if (uploadingStrip) uploadingStrip.appendChild(placeholder);
-      pendingUploads++;
-
-      var fd = new FormData();
-      fd.append('session_id', window.SESSION_ID);
-      fd.append('file', file);
-      if (activeConsignmentId) fd.append('consignment_id', activeConsignmentId);
-
-      fetch('/api/upload', { method: 'POST', body: fd })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (!data.ok) throw new Error(data.error || 'Upload failed');
-          pendingUploads--;
-          placeholder.remove();
-          var section = sections.get(activeConsignmentId);
-          if (section) {
-            section.photos.unshift({ id: data.id, thumbUrl: data.thumbUrl, fullUrl: data.fullUrl });
-            renderSections();
-            if (dialog && dialog.open && openDialogConsignmentId === activeConsignmentId) {
-              renderDialogGallery(section);
-            }
-          }
-        })
-        .catch(function (err) {
-          pendingUploads--;
-          placeholder.classList.remove('uploading');
-          placeholder.classList.add('error');
-          placeholder.innerHTML = '<span class="spinner">⚠️</span>';
-          placeholder.title = err.message;
-          console.error('Upload failed:', err);
-        });
+    uploadHooks = {
+      // Tagged to the consignment that was active when the photo was PICKED -
+      // scanning the next consignment while a batch is still uploading must
+      // not move the rest of it there.
+      addFields: function (job) {
+        if (activeConsignmentId) {
+          job.fields.consignment_id = activeConsignmentId;
+          var s = sections.get(activeConsignmentId);
+          job.keyValue = s ? s.keyValue : '';
+        }
+      },
+      placeTile: function (job) { if (uploadingStrip) uploadingStrip.appendChild(job.tile); },
+      onSaved: function (job, data) {
+        if (job.tile.parentNode) job.tile.parentNode.removeChild(job.tile);
+        var cid = job.fields.consignment_id;
+        var section = sections.get(cid);
+        if (!section && cid) {
+          // Its card was emptied (last photo removed) while this one was on its way.
+          section = { consignmentId: cid, keyValue: job.keyValue || '', itemIds: [], photos: [] };
+          sections.set(cid, section);
+          sectionOrder.unshift(cid);
+        }
+        if (section) {
+          section.photos.unshift({ id: data.id, thumbUrl: data.thumbUrl, fullUrl: data.fullUrl });
+          renderSections();
+          if (dialog && dialog.open && openDialogConsignmentId === cid) renderDialogGallery(section);
+        }
+      },
+      countSaved: totalPhotoCount,
     };
-
-    getBusyCount = function () { return pendingUploads; };
-    getTotalCount = totalPhotoCount;
   }
 
   // ==========================================================================
@@ -525,43 +843,33 @@
   // unchanged from the original behavior.
   // ==========================================================================
   if (!consignmentLogging) {
-    function updateCounterFlat() {
-      counter.textContent = gallery.querySelectorAll('.thumb').length + ' photo(s)';
+    function savedFlatCount() {
+      return gallery ? gallery.querySelectorAll('.thumb:not(.uploading):not(.upload-failed)').length : 0;
     }
 
-    function addPlaceholder() {
-      var tile = document.createElement('div');
-      tile.className = 'thumb uploading';
-      tile.innerHTML = '<span class="spinner">⏳</span>';
-      gallery.prepend(tile);
-      updateCounterFlat();
-      return tile;
-    }
-
-    uploadOne = function (file) {
-      var tile = addPlaceholder();
-      var fd = new FormData();
-      fd.append('session_id', window.SESSION_ID);
-      fd.append('file', file);
-
-      fetch('/api/upload', { method: 'POST', body: fd })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (!data.ok) throw new Error(data.error || 'Upload failed');
-          tile.classList.remove('uploading');
-          tile.outerHTML =
-            '<a href="' + data.fullUrl + '" target="_blank" class="thumb" data-id="' + data.id + '">' +
-            '<img src="' + data.thumbUrl + '" loading="lazy">' +
-            '<button type="button" class="delete-btn" data-id="' + data.id + '" title="Remove photo">×</button>' +
-            '</a>';
-        })
-        .catch(function (err) {
-          tile.classList.remove('uploading');
-          tile.classList.add('error');
-          tile.innerHTML = '<span class="spinner">⚠️</span>';
-          tile.title = err.message;
-          console.error('Upload failed:', err);
-        });
+    uploadHooks = {
+      addFields: function () {},
+      placeTile: function (job) { if (gallery) gallery.prepend(job.tile); },
+      onSaved: function (job, data) {
+        var a = document.createElement('a');
+        a.href = data.fullUrl;
+        a.target = '_blank';
+        a.className = 'thumb';
+        a.dataset.id = data.id;
+        var img = document.createElement('img');
+        img.src = data.thumbUrl;
+        img.loading = 'lazy';
+        a.appendChild(img);
+        var del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'delete-btn';
+        del.dataset.id = data.id;
+        del.title = 'Remove photo';
+        del.textContent = '×';
+        a.appendChild(del);
+        if (job.tile.parentNode) job.tile.parentNode.replaceChild(a, job.tile);
+      },
+      countSaved: savedFlatCount,
     };
 
     function deleteOne(id, tile) {
@@ -574,7 +882,7 @@
         .then(function (data) {
           if (!data.ok) throw new Error(data.error || 'Delete failed');
           tile.remove();
-          updateCounterFlat();
+          refresh();
         })
         .catch(function (err) { alert('Could not remove photo: ' + err.message); });
     }
@@ -582,7 +890,7 @@
     if (gallery) {
       gallery.addEventListener('click', function (e) {
         var btn = e.target.closest('.delete-btn');
-        if (!btn) return;
+        if (!btn || btn.classList.contains('upload-discard')) return;
         e.preventDefault();
         e.stopPropagation();
         var tile = btn.closest('.thumb');
@@ -590,22 +898,25 @@
         deleteOne(btn.dataset.id, tile);
       });
     }
-
-    getBusyCount = function () { return gallery.querySelectorAll('.thumb.uploading').length; };
-    getTotalCount = function () { return gallery.querySelectorAll('.thumb').length; };
   }
+
+  refresh();
 
   // ==========================================================================
   // Shared: Submit
   // ==========================================================================
   if (submitBtn) {
     submitBtn.addEventListener('click', function () {
-      var busy = getBusyCount();
+      var busy = pendingCount();
       if (busy > 0) {
-        alert('Still uploading ' + busy + ' photo(s) - wait for them to finish first.');
+        alert('Still uploading ' + busy + ' photo(s) - wait for them to finish first (keep this page open).');
         return;
       }
-      var total = getTotalCount();
+      if (failedJobs.length) {
+        alert(failedJobs.length + ' photo(s) didn\'t upload - tap Retry on them, or × to leave them out, then Submit.');
+        return;
+      }
+      var total = uploadHooks.countSaved();
       if (total === 0) {
         alert('No photos uploaded yet.');
         return;

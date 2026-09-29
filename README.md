@@ -58,6 +58,27 @@ Leave that window open (or run it as a background/scheduled task - see
 No VLAN/ACL issues this way - the hotspot is its own private network with
 this PC as the only "router" on it.
 
+## 3a. Uploading 50-100 photos at once
+
+Pick as many photos as you like. Every page (Packing, Dispatch, New Store Kits) sends two
+at a time and keeps the rest waiting in order, so:
+
+- **Keep the page open (and the screen on) until the status line says it's done.** Over a
+  busy hotspot 100 photos take roughly 15-20 minutes; on a good Wi-Fi a few minutes.
+- **"Connection problem - N photo(s) waiting, nothing is lost"** means the Wi-Fi dropped or
+  the portal PC restarted. Do nothing: it tries again by itself (after 2 s, 5 s, 10 s ... then
+  every minute) and carries on where it stopped. **Try now** skips the wait.
+- A photo with **⚠ and Retry** was refused by the portal (the tile shows which photo). Tap
+  **Retry**, or **×** to leave it out. Submit waits until nothing is uploading or failed.
+- **"You've been logged out"**: log in again in a new tab, come back, tap **Try again**.
+- Closing the page while photos are waiting asks first. If the page does get closed, photos
+  picked from the phone's library can be picked again, but a **Take Photo** shot that hadn't
+  uploaded yet is gone - so let a batch finish before closing the browser.
+
+Once a photo shows as a thumbnail it is saved on this PC, and it reaches Google Drive in the
+background after Submit, however long Drive takes. See CODE_GUIDE.md section 8 for the load
+tests behind these numbers.
+
 ## 4. Connect it to Google Drive (optional but recommended)
 
 Local saving works immediately with zero setup - Drive sync is additive.
