@@ -549,6 +549,17 @@ def layout(content, cfg, metrics=None):
     advance = int(round(plan["body_h"] * BODY_LINE_SPACING))
     for i, line in enumerate(body_lines):
         blocks.append(_text_block(m, plan, body_top + i * advance, plan["body_h"], False, line))
+
+    if blocks:
+        last_block = blocks[-1]
+        content_bottom = last_block["y"] + last_block["h"]
+        
+        # Calculate half the remaining space between the last block and the bottom margin
+        y_offset = max(0, (plan["bottom"] - content_bottom) // 2)
+        
+        # Shift every layout block down by the offset
+        for b in blocks:
+            b["y"] += y_offset
     return [blocks]
 
 
