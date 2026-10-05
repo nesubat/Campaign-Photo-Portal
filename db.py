@@ -40,6 +40,43 @@ def get_conn():
     return conn
 
 
+def rollback_if_open():
+    """Ends a transaction a failed write left open on THIS thread's
+    connection, if there is one. Returns True when it had to.
+
+    Python's sqlite3 (legacy transaction mode) opens a transaction by itself
+    before a write. When that write fails - "database is locked" after
+    another connection held the lock past the 30 s wait - the transaction
+    stays open, the next read freezes this connection's view of the database,
+    and once anyone else commits, every later write on it fails at once, for
+    good. On the Drive-sync thread that meant re-sending the same photos every
+    tick and marking none synced; on a web-server thread, failing every
+    request it served. So the background loops call this after any error and
+    at the start of every pass, and app.py calls it at the end of every
+    request. Never raises."""
+    conn = getattr(_local, "conn", None)
+    if conn is None or not conn.in_transaction:
+        return False
+    try:
+        conn.rollback()
+    except sqlite3.Error as exc:
+        print(f"[db] rollback of a stuck transaction failed: {exc}")
+    return True
+
+
+def drive_statuses(upload_ids):
+    """{upload_id: drive_status} for these uploads - so a batch that failed
+    half-way doesn't flip the photos it already got into Drive back to error."""
+    ids = [int(i) for i in upload_ids]
+    if not ids:
+        return {}
+    conn = get_conn()
+    rows = conn.execute(
+        f"SELECT id, drive_status FROM uploads WHERE id IN ({','.join('?' * len(ids))})", ids
+    ).fetchall()
+    return {row["id"]: row["drive_status"] for row in rows}
+
+
 def init_db():
     conn = get_conn()
     conn.executescript(

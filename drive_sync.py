@@ -272,7 +272,7 @@ def _mark_row_error(row, error_text, error_counts):
     db.mark_drive_error(row["id"], error_text, retry_at)
 
 
-def _split_into_batches(rows, max_bytes, max_count):
+def _split_into_batches(rows, max_bytes, max_count, solo_ids=frozenset()):
     """Slices one (job_number, category) group of rows into upload batches
     bounded by whichever limit is hit first: total raw file size, or photo
     count. Checks each file's REAL size on disk, since that's what actually
@@ -283,11 +283,18 @@ def _split_into_batches(rows, max_bytes, max_count):
     file across multiple requests, so an oversized single photo just goes
     out alone rather than being silently dropped. A missing file (already a
     separate error case _sync_batch reports) is treated as size 0 here so it
-    can't skew the sizing of the rest of the batch."""
+    can't skew the sizing of the rest of the batch.
+
+    solo_ids: photos that were in a batch that kept failing while Drive was
+    otherwise working (see _run_loop) each go out on their own, so one bad
+    photo can't hold its batch-mates back for ever."""
     batches = []
     current = []
     current_bytes = 0
     for row in rows:
+        if row["id"] in solo_ids:
+            batches.append([row])
+            continue
         path = UPLOAD_DIR / row["job_number"] / row["category"] / row["filename"]
         try:
             size = path.stat().st_size
@@ -317,7 +324,13 @@ def _sync_batch(rows, cfg, error_counts):
     for row in rows:
         path = UPLOAD_DIR / row["job_number"] / row["category"] / row["filename"]
         if not path.exists():
-            db.mark_drive_error(row["id"], "local file missing", None)
+            # Backs off like any other failure (10 s ... 15 min). It used to be
+            # retried with no delay at all, so 200 of them - the sync's whole
+            # window - would stop every newer photo from ever being sent.
+            if row["id"] not in error_counts:
+                print(f"[drive-sync] photo {row['id']} ({row['job_number']}/{row['category']}/{row['filename']}) "
+                      "is missing from this PC, so it can't go to Drive - checking again later")
+            _mark_row_error(row, "local file missing", error_counts)
             continue
         with open(path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("ascii")
@@ -332,7 +345,7 @@ def _sync_batch(rows, cfg, error_counts):
             file_entry["note"] = note
         files.append((row, file_entry))
     if not files:
-        return
+        return False  # nothing was sent (every file missing)
 
     payload = {
         "secret": cfg["sharedSecret"],
@@ -364,6 +377,7 @@ def _sync_batch(rows, cfg, error_counts):
             error_text = (file_result or {}).get("error", "no result returned for this file")
             _mark_row_error(row, error_text, error_counts)
     _requeue_finished_kit_sheets(kit_sessions_synced)
+    return True
 
 
 def _requeue_finished_kit_sheets(session_ids):
@@ -822,29 +836,79 @@ def _maybe_resize_sheet(job_number, category, cfg):
     db.mark_sheet_resized(job_number, category)
 
 
+# A batch whose photos have failed this many times in a row goes one photo at
+# a time even if nothing else has got through (the backstop for a bad batch
+# that's the only thing left in the queue - see _run_loop). With the backoff
+# ladder that's about 1.5 h of failing, longer than a typical outage.
+SOLO_AFTER_FAILURES = 8
+
+
+def _fail_batch(batch, exc, error_counts):
+    """Marks a whole-batch failure on the photos that aren't already in Drive
+    (the batch may have failed after marking some of them synced)."""
+    db.rollback_if_open()
+    try:
+        statuses = db.drive_statuses([row["id"] for row in batch])
+    except Exception:  # noqa: BLE001 - if even this fails, mark them all
+        statuses = {}
+    for row in batch:
+        if statuses.get(row["id"]) != "synced":
+            _mark_row_error(row, str(exc), error_counts)
+
+
 def _run_loop():
     error_counts = {}
     sheet_error_counts = {}
     kit_sheet_error_counts = {}  # session_id -> consecutive failed Pack Log writes
+    # Photos to send one at a time (see _split_into_batches). A batch that
+    # fails while Drive is demonstrably working - another batch got through in
+    # the same pass, or since this batch last failed - has a bad photo in it,
+    # so its photos go solo from then on and only the bad one keeps failing.
+    # During an outage nothing gets through, so batches stay whole and the
+    # backlog drains at full speed afterwards.
+    solo_ids = set()
+    ok_since_failed = {}  # upload id -> has any batch got through since this photo's batch last failed?
     while not _stop_event.is_set():
+        # Start every pass with a clean connection, whatever the last one hit.
+        db.rollback_if_open()
         cfg = load_drive_config()
         if cfg:
             touched = set()  # (job_number, category) pairs this tick actually did work for
 
+            failed_batches = []
+            any_batch_ok = False
             try:
                 for key, group_rows in db.pending_drive_uploads_grouped().items():
                     touched.add(key)
                     for batch in _split_into_batches(
-                        group_rows, DRIVE_UPLOAD_BATCH_MAX_BYTES, DRIVE_UPLOAD_BATCH_MAX_COUNT
+                        group_rows, DRIVE_UPLOAD_BATCH_MAX_BYTES, DRIVE_UPLOAD_BATCH_MAX_COUNT, solo_ids
                     ):
                         try:
-                            _sync_batch(batch, cfg, error_counts)
-                        except Exception as exc:  # noqa: BLE001 - log and keep the loop alive
+                            if not _sync_batch(batch, cfg, error_counts):
+                                continue  # nothing was sent - says nothing about Drive
+                            any_batch_ok = True
+                            solo_ids.difference_update(row["id"] for row in batch)
                             for row in batch:
-                                _mark_row_error(row, str(exc), error_counts)
+                                ok_since_failed.pop(row["id"], None)
+                            for uid in ok_since_failed:
+                                ok_since_failed[uid] = True
+                        except Exception as exc:  # noqa: BLE001 - log and keep the loop alive
+                            _fail_batch(batch, exc, error_counts)
+                            if len(batch) > 1:
+                                failed_batches.append(batch)
                             print(f"[drive-sync] batch of {len(batch)} failed: {exc}")
             except Exception as exc:  # noqa: BLE001 - never let the worker thread die
+                db.rollback_if_open()
                 print(f"[drive-sync] loop error: {exc}")
+            for batch in failed_batches:
+                ids = [row["id"] for row in batch]
+                drive_was_working = any_batch_ok or any(ok_since_failed.get(uid) for uid in ids)
+                for uid in ids:
+                    ok_since_failed[uid] = False
+                if drive_was_working or min(error_counts.get(uid, 0) for uid in ids) >= SOLO_AFTER_FAILURES:
+                    solo_ids.update(row["id"] for row in batch)
+                    print(f"[drive-sync] sending those {len(batch)} photos one at a time from now on, "
+                          "so one bad photo can't hold up the rest")
 
             try:
                 for job_number, consignment_map in db.pending_sheet_log_batches(DRIVE_SHEET_BATCH_CAP):
@@ -863,6 +927,7 @@ def _run_loop():
                                 db.mark_sheet_error(uid, str(exc), retry_at)
                         print(f"[sheet-log] batch of {len(consignment_map)} consignments failed: {exc}")
             except Exception as exc:  # noqa: BLE001 - never let the worker thread die
+                db.rollback_if_open()
                 print(f"[sheet-log] loop error: {exc}")
 
             # New Store Kit Pack Logs - after the photo step on purpose, so a
@@ -874,8 +939,10 @@ def _run_loop():
                         if _log_kit(kit_row, cfg):
                             kit_sheet_error_counts.pop(kit_row["session_id"], None)
                     except Exception as exc:  # noqa: BLE001 - log and keep the loop alive
+                        db.rollback_if_open()
                         _mark_kit_sheet_error(kit_row, str(exc), kit_sheet_error_counts)
             except Exception as exc:  # noqa: BLE001 - never let the worker thread die
+                db.rollback_if_open()
                 print(f"[kit-sheet] loop error: {exc}")
 
             for job_number, category in touched:

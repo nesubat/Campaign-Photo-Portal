@@ -81,6 +81,16 @@ def _load_user():
     auth.load_current_user()
 
 
+@app.teardown_request
+def _release_db(exc):
+    # A write that failed in this request (e.g. "database is locked") may
+    # have left this thread's connection mid-transaction, which would make
+    # every later request on the same waitress thread fail too - see
+    # db.rollback_if_open. Normal requests have nothing open here.
+    if db.rollback_if_open():
+        print("[db] rolled back a transaction a failed request left open")
+
+
 @app.context_processor
 def _inject_user():
     return {"current_user": g.user}

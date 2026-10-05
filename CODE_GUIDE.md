@@ -20,6 +20,7 @@ Submit, and a per-kit Pack Log Sheet in Drive. See [§3.5](#35-new-store-kits).
 - [5. Database schema](#5-database-schema)
 - [6. Configuration](#6-configuration)
 - [7. Limitations & known tradeoffs](#7-limitations--known-tradeoffs)
+- [8. Capacity & load-test findings](#8-capacity--load-test-findings-septoct-2026)
 
 ---
 
@@ -412,6 +413,7 @@ purposes:
 | `_kit_note` | "<Kit> · Pack N" / "<Kit> · no pack" — appended to a kit photo's Drive description (kit photos share `<Job>/Packing Photos`, category name overridden by `DRIVE_FOLDER_OVERRIDES`). |
 | `_kit_payload` / `_log_kit` / `_mark_kit_sheet_error` | Builds and sends a submitted kit's full Pack Log snapshot (`logKit`); waits for photos, writes partial Sheets after `KIT_SHEET_FORCE_AFTER_MIN`, gives up after `KIT_SHEET_GIVE_UP_HOURS`; re-reads the kit around the call so a reopen mid-write is never overwritten; sends `previousKitName` after a rename and `previousJobNumber` + `moveFileIds` after a job change. Prints a redeploy hint on `unknown or missing action`. |
 | `_labels_pdf_payload` / `_record_labels_result` | The kit's labels PDF, once per submission, with the previous PDF's id for `logKit_` to trash; records the new id (or says the Apps Script needs redeploying). |
+| `_run_loop` / `_fail_batch` / `SOLO_AFTER_FAILURES` | The sync thread: one pass every `DRIVE_SYNC_INTERVAL_SEC`. Starts each pass with `db.rollback_if_open()`; marks a failed batch's photos (not the ones already synced) for retry; sends the photos of a batch that keeps failing while Drive works one at a time, so one bad photo can't hold up the rest (§8.2). |
 | `_call_web_app` | Every Web App call goes through it: says which of script.google.com / the googleusercontent.com result page answered, how long it took and what an error page said (not just "404" / "Expecting value"), and retries once after `QUICK_RETRY_DELAY_SEC` for the repeat-safe `uploadBatch` / `logKit`. |
 
 ### `local_cleanup.py` — disk space reclamation
@@ -739,3 +741,125 @@ Being direct about what this system does **not** solve, rather than only what it
   service under another account, the printer must be installed for that account (or for all users).
 - **Thumbnails of images Pillow can't read** (e.g. HEIC without a plugin) fall back to the full image, which
   is slower on a phone. Browsers usually hand over JPEGs anyway.
+
+## 8. Capacity & load-test findings (Sept–Oct 2026)
+
+**The load tested:** 10–13 people at once, each on a phone, all on one Windows PC running `serve.py`. One person
+may pick 50–100 photos in one go. A busy day is 6–7 campaigns of that size: ~700 photos and ~3–3.5 GB. Drive
+uploads may be delayed; what must never happen is a lost photo.
+
+**How it was tested:** 5 code audits plus 6 worst-case scenarios (S1–S6), each run alone, on a 12-core dev laptop
+(i7-1250U, 16 GB RAM, SSD; Python 3.14, waitress 3.0.2, Flask 3.1, Pillow 12.3). The server PC may be slower, so
+treat timings as best-case. Everything ran through the real code, served by waitress exactly as `serve.py` does,
+against an isolated copy (temp DB and uploads). Phones were simulated (realistic photos, browser-like
+concurrency, bandwidth limits), plus real Chrome for the upload queue. Drive was a fake Apps Script that behaves
+like Google's (302 → echo page, same-name reuse, injected 404s, error pages, hangs and outages). Real Drive and
+the printer were never touched.
+
+### 8.1 Results at a glance
+
+| Scenario | What was thrown at it | Result |
+|---|---|---|
+| S1 Peak mixed day | 13 phones at once: Packing + consignments, Dispatch, 2 kits; 1,210 × 12 MP (5 GB) | 0 lost / duplicated / errors. LAN: all on the PC in **114 s**. Hotspot 40 Mbit/s shared: **18.9 min**, i.e. **~18 min for one person's 100 photos**. Server mostly idle: 0.27 CPU-s per photo, 275–457 MB RAM. |
+| S2 Big & odd images | 13 × 100 × 48 MP (16 GB) at once; 0-byte, HEIC, truncated, 108/200 MP, 60 MB, rotated | 0 lost. Peak RAM **1.6 GB**; stayed responsive (kit poll p50 27 ms). A burst of 108 MP photos can need ~0.9 GB *each* (full-size decode for the thumbnail). Odd files never crashed it; 0-byte / HEIC / truncated / 200 MP are saved without a thumbnail. Rotated photos come out upright. |
+| S3 One kit, 13 people | 1 kit grown to 100 packs, ~1,000 items, 700 photos; 4 editing, 9 polling | Reservations never clashed; report always right; Final Submit 0.02–0.08 s with 12 phones polling. Kit refresh is **~245 KB per poll** at 700 photos. |
+| S4 Network faults & crashes | dropped uploads, very slow phones, >100 connections, hard kills mid-batch | Database intact after every kill; no partial files. **Before the fix, Packing/Dispatch lost photos** (258 of 520 in a 10 s restart; 32 of 32 dropped uploads) — fixed, see 8.2. A retry after a lost reply can store a photo twice. |
+| S5 A day's Drive backlog | 7 campaigns + 13 phones working; Apps Script with 5 % 404s, 3 % error pages, a 5.5-min hang, a 10-min outage, a portal kill mid-batch | **1,120 of 1,120 photos in Drive exactly once.** 45 retries reused the copy already in Drive. Local cleanup deleted only Drive-confirmed photos. A day's backlog takes **~2.5 h** to reach Drive at a realistic Apps Script speed. |
+| S6 Weeks of use | 4 weeks of history (19,188 uploads, 155 jobs, 40 kits) + 13 phones for 5 min | No slowdown: DB 7.8 MB (~100 MB/year), WAL ≤ 4 MB, every hot path < 16 ms. **Local cleanup removes at most 50 photos/hour** (see 8.3). |
+
+### 8.2 Can a photo be lost? (the owner's question)
+
+- **Phone → portal PC.** This was the real gap. The Packing/Dispatch page fired every picked photo at once
+  with no retry, so a Wi-Fi drop or a portal restart lost the rest of the pick, silently. **Fixed 2026-09-30
+  (commit 345fc30):** `upload.js` now queues photos (2 at a time) and retries forever after any connection
+  problem (§4, `static/upload.js`). The kit page already queued. Re-tested in real Chrome: an 8 s Wi-Fi drop
+  plus a portal kill + restart in one 30-photo batch saved 30/30. The skeptic reviewers confirmed the old
+  failure modes no longer apply to the committed code. **What's left:** a photo still on the phone when the
+  page is closed (a library pick can be picked again; a *Take Photo* shot is gone), and a rare duplicate when
+  the connection drops just after the PC saved a photo.
+- **Portal PC → Google Drive.** **No photo was lost in any run** (S1 1,210; S2 1,300; S3 700; S4 535 after
+  crashes; S5 1,120 with every fault above). Drive sync retries until Drive confirms each photo, reuses a
+  same-named file instead of storing it twice, and the local copy is never deleted before that.
+  Code review found ways a photo could get **stuck** — never lost, since the local copy stays. The first three
+  are **fixed (2026-10-05)**, each with a test that drives the real sync loop against a fake Apps Script
+  (`scratchpad/tests/test_drive_stuck.py`, `test_request_lock.py`):
+  1. *Sync stuck after a long database lock* — reproduced: after one "database is locked" (a lock held
+     > 30 s, e.g. `portal.db` open in DB Browser) Python's sqlite3 left the transaction open, the next read froze
+     the connection's view, and every later write failed for good, so the sync thread re-sent the same photos
+     every tick and marked none synced. **Fix:** `db.rollback_if_open()` — called at the start of every Drive-sync
+     and local-cleanup pass and after any error in them, and at the end of every web request
+     (`app.py` `teardown_request`, which also stops a web-server thread being left broken the same way).
+     A batch that fails half-way no longer flips its already-synced photos back to "error" (`_fail_batch`).
+  2. *Missing local files blocked the queue* — a photo whose file was deleted by hand was retried with no delay,
+     so 200 of them filled the sync's whole window. **Fix:** it now backs off like any failure (10 s … 15 min)
+     and the console names it once.
+  3. *One bad photo blocked its batch* — a photo that makes the whole Apps Script call fail (e.g. one that's too
+     big) kept its 2–4 batch-mates from syncing. **Fix:** a batch that fails while Drive is demonstrably working
+     (another batch got through in the same pass, or since it last failed) is re-sent one photo at a time, so only
+     the bad one keeps failing; after `SOLO_AFTER_FAILURES` (8) failures in a row it goes one at a time anyway.
+     During a real outage nothing gets through, so batches stay whole and the backlog drains at full speed after.
+
+  Not changed:
+  4. *A photo that lands while its batch is being Submitted* is saved but never sent. The upload queue now makes
+     Submit wait for every photo, so this needs a second phone on the same batch.
+  5. *Very slow office uplink*: each ~20 MB batch must finish sending within 240 s, so below ~1 Mbit/s nothing
+     reaches Drive.
+  6. *Drive storage full*: at ~3.5 GB/day (~100 GB/month), a small Google storage plan fills within days to
+     weeks; then every photo just keeps retrying.
+
+### 8.3 Sizing and running it
+
+- **Wi-Fi: Windows Mobile Hotspot allows only 8 devices.** For 10–13 phones use a Wi-Fi router or access point.
+  Time per photo ≈ photo size × phones uploading ÷ total Wi-Fi speed: 100 × 4 MB photos with 13 phones sharing
+  40 Mbit/s takes ~18 min per person; at 10 Mbit/s over an hour. Tell staff to keep the page open.
+- **Server PC.** CPU is not the limit (0.27 CPU-seconds per 12 MP photo). RAM: 8 GB+; a burst of 48 MP photos
+  peaked at 1.6 GB, and 108 MP photos can need ~0.9 GB each while their thumbnail is made.
+- **Keep the PC on 24/7.** Local cleanup deletes at most 50 photos/hour (2 days after they reach Drive). Always on:
+  local copies peak ~7 GB. On ~11 h/day: cleanup never catches up and the disk grows ~0.6 GB/day indefinitely.
+- **Free disk.** Keep ≥ 50 GB free for `uploads/`. If Drive is down for a week, local copies reach ~25 GB and take
+  ~2 weeks to clear afterwards. There is no low-disk warning; a full disk makes uploads fail (the page retries).
+- **Google Drive storage.** ~3.5 GB/day, ~100 GB/month. Check the plan of the account that owns the Apps Script.
+- **Office internet.** Drive sync uses the uplink for 1–3 h on a busy day.
+- **The database.** Don't open `data/portal.db` in DB Browser or similar while the portal runs (a held lock can stall
+  it — item 1 above). Back up with the portal stopped. Keep `data/` off OneDrive/Dropbox/network drives.
+- **The console window.** Clicking or selecting text in it (QuickEdit) pauses printing, which can freeze the threads
+  that print until Esc is pressed. Don't click in it, or turn QuickEdit off.
+- **History.** No slowdown after weeks (S6); about 100 MB of database a year.
+
+### 8.4 Found but deliberately not changed (owner, 2026-09-30: "only photo loss matters")
+
+| Issue | Effect | Severity |
+|---|---|---|
+| Kit page aborts each upload at a fixed 120 s, including send time | On a very slow shared hotspot (< ~8 Mbit/s for 13 phones) kit photos time out and need Retry | Medium |
+| No upload id, so a retry after a lost reply stores the photo again | Occasional duplicate, visible and removable | Medium |
+| Thumbnail decodes the full-size photo | ~100 MB RAM per 12 MP, ~400 MB per 48 MP, ~0.9 GB per 108 MP while it's processed | Medium |
+| waitress defaults (`connection_limit` 100, `channel_timeout` 120 s) | ~20 spare connections at 13 phones; stuck connections can block new ones for ~2 min | Medium |
+| Kit refresh sends the whole kit every 4 s, uncompressed | ~245 KB per poll at 700 photos; a noticeable share of hotspot airtime | Medium |
+| Kit page: a dropout fails the queued photos, each needing a Retry tap; a pack can't be saved while its photos upload | Extra taps on a flaky link | Medium |
+| No size cap or content check on uploads | Empty / junk / huge files accepted as photos; 0-byte and > ~50 MB ones never reach Drive | Low |
+| A crash mid-save leaves orphan files nobody deletes | Wasted disk only | Low |
+| Changing the job number while a pick is uploading | Photos split across the old and new job | Low |
+| Label preview embeds the raw ZPL | 11.9 MB page for a 100-pack kit | Low |
+| `/media` URLs need no login and create empty folders for unknown jobs | Clutter (cleanup prunes hourly) | Low |
+| Filenames are timestamps to the microsecond | Owner decided not to pursue | — |
+
+### 8.5 The load-test tools
+
+The harness (simulated phones, fake Apps Script, resource sampler, integrity report, scenario files) and the
+full per-scenario reports were built in the Claude Code session's temporary scratchpad, **not in this repo**
+(`.../scratchpad/load/`: `HARNESS.md`, `run_scenario.py`, `results/S1…S6*.md`; the Chrome upload-queue test is
+`.../scratchpad/e2e/upload_queue_e2e.mjs`). Copy them into the repo (e.g. `tools/loadtest/`) if they should be
+re-run on the server PC.
+
+### 8.6 Quick answers
+
+- *Can 13 people upload 100 photos each at the same time?* Yes. Nothing was lost or broken; the Wi-Fi is the
+  limit (~18 min per person at 40 Mbit/s shared), not the PC. You need a router/access point for more than 8 phones.
+- *What if the Wi-Fi drops or the PC restarts mid-upload?* The page says "Connection problem - N photo(s) waiting,
+  nothing is lost" and carries on by itself. Keep the page open.
+- *What if Google Drive or the internet is down for a day?* Photos wait on the PC and go up afterwards, each
+  exactly once. Local disk grows ~3.5 GB/day meanwhile.
+- *How long until photos are in Drive?* After Submit: minutes for one campaign, ~2–3 h for a heavy day's backlog.
+- *How much disk does the PC need?* ~7–10 GB in normal use with the PC always on; keep 50 GB free.
+- *Will it slow down over months?* No measurable slowdown after 4 weeks; the database grows ~100 MB/year.
+- *Can a photo be deleted from the PC before it's in Drive?* No. Only Drive-confirmed photos are cleaned up, 2 days later.
