@@ -20,6 +20,7 @@ Submit, and a per-kit Pack Log Sheet in Drive. See [§3.5](#35-new-store-kits).
 - [5. Database schema](#5-database-schema)
 - [6. Configuration](#6-configuration)
 - [7. Limitations & known tradeoffs](#7-limitations--known-tradeoffs)
+- [8. Running & operating](#8-running--operating)
 
 ---
 
@@ -31,7 +32,7 @@ flowchart TB
         P1["Phone + barcode scanner"]
     end
 
-    subgraph Server["Windows machine — py serve.py"]
+    subgraph Server["Windows machine — serve.py\n(started at logon by autostart.py)"]
         Flask["Flask app (app.py)\nlogin, upload, gallery, admin routes"]
         SQLite[("SQLite\ndata/portal.db")]
         Disk[("Local disk\nuploads/&lt;job&gt;/&lt;category&gt;/")]
@@ -163,7 +164,8 @@ sequenceDiagram
 The phone side is a queue on both kinds of page: `upload.js` (Packing/Dispatch) and `kit.js` (New Store
 Kits) send two photos at a time and retry after a connection problem, so a dropped Wi-Fi connection or a
 portal restart delays photos rather than losing them (see `static/upload.js` below). Once a photo is saved
-here it can't be lost on the way to Drive: see §3.4 and §8.
+here it can't be lost on the way to Drive: it's retried until Drive confirms it (§3.4), and its local copy
+is only deleted after that (`local_cleanup.py`).
 
 ### 3.4 Background Drive sync (one tick, every `DRIVE_SYNC_INTERVAL_SEC`)
 
@@ -276,11 +278,44 @@ font file can't be loaded, Pillow's own font is used, and as a last resort the p
 `printer_not_configured` + a link to `GET /session/<id>/labels` — the same layout rendered as HTML at the
 label's real size in mm (printable from a browser), with the raw ZPL underneath.
 
+### 3.7 Managing open sessions (resume, delete, change job number)
+
+An unsubmitted Packing/Dispatch batch is never stuck: it can be resumed, deleted, or moved to a corrected
+job number. Kits follow their own rules (§3.5); every route below hands a kit off to them.
+
+- **Seeing them.** The start page's **Active Sessions** lists the viewer's own unsubmitted batches
+  (`db.list_open_sessions` — no time limit, unlike the 24 h auto-resume of `find_open_session`) plus every
+  open kit, for everyone (`_open_kits_for_index`). The admin page adds **User Sessions**: every unsubmitted
+  batch of every user, grouped by person (`db.list_all_open_sessions`). Tapping one opens `/session/<id>`.
+- **Deleting** (`POST /session/<id>/delete` → `delete_session`). Owner or admin only (`_own_session_or_403`),
+  unsubmitted only. Removes each photo's files and row, then any consignment left with no photos
+  (`db.delete_consignment_if_orphaned`), then the session, then empty folders (`_cleanup_empty_job_dir`).
+  The list pages send it with `fetch` (`topbar.js`, `ajax=1` → JSON), so the row just disappears; the plain
+  form post redirects with a flash. A kit goes to `_delete_kit` (creator/admin, never-submitted only).
+- **Changing the job number** (the form on the upload page → `POST /session/<id>/edit-job-number` →
+  `edit_session_job_number`). Owner or admin, unsubmitted only, same `J` + 6 digits rule as `/start`. The
+  files move on disk first (`_move_upload_files`); only then does `db.rename_session_job` move the session,
+  its uploads and its consignments, committed once at the end. A consignment the corrected job already has
+  (same Consignment #/Store) is merged into that one — items, contributors and photo count — rather than
+  duplicated. Nothing in Drive needs fixing: an unsubmitted batch hasn't synced yet. A kit's job number is
+  changed from the kit page's ✏️ instead (§3.5), so every phone on the kit stays in step.
+
 ---
 
 ## 4. File-by-file reference
 
 ### `app.py` — Flask routes
+
+**Routes at a glance.** Everything except `/login` needs a logged-in user; `/admin*` needs an admin.
+
+| Area | Routes |
+|---|---|
+| Login & account | `GET/POST /login`, `POST /logout`, `GET/POST /change-pin` |
+| Admin | `GET /admin`, `POST /admin/users` (create), `POST /admin/users/<id>/reset-pin` · `/approve` · `/delete` · `/role` |
+| Start & sessions | `GET /` (start page), `POST /start`, `GET /session/<id>`, `POST /session/<id>/delete` · `/edit-job-number` · `/reopen` · `/release-my-packs` |
+| Packing/Dispatch APIs | `POST /api/consignment/resolve` · `/api/consignment/item` · `/api/consignment/item/decrement`, `POST /api/upload` · `/api/delete` · `/api/finalize` |
+| New Store Kit APIs | `POST /api/kit/state` · `/pack/new` · `/pack/reserve` · `/pack/release` · `/item/add` · `/item/remove` · `/finalize` · `/rename` · `/labels/print`; `GET /session/<id>/labels` (preview). Kit photos use `/api/upload` and `/api/delete` too. |
+| Viewing photos | `GET /gallery/<job>`, `GET /media/<job>/<category>/<file>` and `/media/<job>/<category>/thumbs/<file>` |
 
 | Function | Purpose |
 |---|---|
@@ -293,7 +328,12 @@ label's real size in mm (printable from a browser), with the raw ZPL underneath.
 | `login` (`/login`) | The whole login/signup/choose-PIN state machine — see [§3.1](#31-login-name--pin). |
 | `logout` (`POST /logout`) | Clears the session. |
 | `change_pin` (`/change-pin`) | Self-service PIN change for an already-logged-in user (the only way an admin can ever change their own PIN). |
-| `admin_page`, `admin_create_user`, `admin_reset_pin`, `admin_approve_user`, `admin_delete_user`, `admin_toggle_role` | User-management actions, all behind `@auth.admin_required`. |
+| `admin_page`, `admin_create_user`, `admin_reset_pin`, `admin_approve_user`, `admin_delete_user`, `admin_toggle_role` | User-management actions, all behind `@auth.admin_required`. `admin_page` also lists every user's unsubmitted sessions (User Sessions — see [§3.7](#37-managing-open-sessions-resume-delete-change-job-number)). |
+| `_format_started_at` | Jinja filter `started_at`: a stored timestamp as "YYYY/MM/DD hh:mm:ss AM/PM AEDT", the zone read off the timestamp's own offset so it's right either side of daylight saving. |
+| `_open_kits_for_index` / `_kit_submitted_at` | The start page's kit cards: every open kit for every user, who's working on which pack, and whether this viewer still holds one. |
+| `delete_session` / `edit_session_job_number` / `_own_session_or_403` | Delete an unsubmitted batch, or move it to a corrected job number; owner or admin only — see [§3.7](#37-managing-open-sessions-resume-delete-change-job-number). Kits are handed to `_delete_kit` / the kit edit pane. |
+| `_save_photo_files` / `_unlink_photo_files` / `_upload_ext` | Shared by both upload paths (batches and kits): write the original + thumbnail (falling back to the original if Pillow can't read it); best-effort removal that never raises (Windows won't delete a file that's being streamed to a phone). |
+| `_move_upload_files` / `_move_files_back` / `_cleanup_empty_job_dir` | Job-number changes: move a session's photos to the new job's folders, put them back if the DB then refuses, and remove folders a delete/move just emptied. |
 | `start` (`POST /start`) | Validates the job number, creates/resumes a session, triggers Drive rehydration if this is a "keep logs" job with no local consignments yet. |
 | `_rehydrate_from_drive` | Best-effort: asks Apps Script (`checkJob`) whether this job already has a Photo Log sheet, and rebuilds local `consignments` rows from it if so — never blocks starting a session on failure. |
 | `_group_photos_by_consignment` | Groups a session's photos into per-consignment sections for the upload page, most-recently-active section first. |
@@ -309,6 +349,7 @@ label's real size in mm (printable from a browser), with the raw ZPL underneath.
 | `media_thumb` / `media_full` | Serves a photo/thumbnail from local disk; if it's already been cleaned up locally, redirects to its Drive view URL instead (catches werkzeug's `NotFound`, which is what `send_from_directory` actually raises). A photo with no thumbnail (Pillow couldn't read it) gets the full image instead. |
 | `_start_kit` | The New Store Kits branch of `/start`: join / reopen / `kit_choice` / create, plus Pack 1 when the kit has nothing in it yet (no packs, no photos). Refuses a new kit named after another kit's not-yet-renamed Pack Log. |
 | `_kit_page` / `_kit_state` | Renders the kit page; builds the per-viewer **KitState** JSON every kit API returns (packs, groups, report, working, reservations, collaborators, `canFinalize`, kit photos, `rev`). |
+| `_kit_request` / `_kit_ok` / `_kit_error` / `_kit_missing` / `_kit_finalized_error` / `_kit_hold_failure` | Every kit API reply has one shape: `{ok, state}` on success, `{ok: false, error, code, state}` on refusal, so the phone always gets the fresh KitState either way. `code` is what kit.js branches on: e.g. `invalid`, `not_holding`, `finalized`, `kit_missing`, `name_taken`, `photo_locked`, `print_failed`. `_kit_request` accepts a body without a JSON content type (`sendBeacon`). |
 | `api_kit_state` | The 4 s poll + heartbeat. |
 | `api_kit_pack_new` / `_reserve` / `_release` | + New Pack, open/take over a pack (`force` after the idle confirm), Save Pack / leave (also hit by `sendBeacon`). |
 | `api_kit_item_add` / `_remove` | Item numbers, via `kits.parse_item` (digits-only index, combined `J456789-02`). |
@@ -331,7 +372,9 @@ always agree), `series_buttons` (J-series quick-pick, first-use order), `series_
 `label_content`, `metrics_for` (Arial Black → Pillow's font → the printer's font), `layout` (landscape
 design canvas, centred, measured wrapping, one label with self-shrinking fonts), `render_page` /
 `printer_image` / `page_png`, `to_zpl` (`^GFA`), `decode_gf_data` (its inverse, for checking), `to_html`
-(the preview = the same image), `send_raw` (ctypes winspool, RAW, aborts a half-written job),
+(the preview = the same image), `kit_labels_pdf` / `pdf_bytes` (the kit's labels PDF for Drive: one
+label-sized page per pack, the same images, saved by Pillow — 1-bit, a couple of KB per label), `send_raw` (ctypes winspool,
+RAW, aborts a half-written job),
 `list_printers`, `startup_lines` (names the font and warns if `LABEL_FONT_FILE` didn't load), and a CLI:
 `py labels.py --list-printers | --sample-zpl | --sample-png FILE | --test-print [--printer NAME]`.
 
@@ -353,9 +396,14 @@ concurrent phones don't block each other. Grouped by area:
 
 - **Bootstrapping**: `init_db` (creates all tables), `_migrate`/`_add_column_if_missing` (additive
   schema changes for upgrading an existing database), `_import_legacy_employees` (one-time: imports
-  the old `employees.json` name list as user accounts with no PIN set yet).
+  the old `employees.json` name list as user accounts with no PIN set yet). `now_iso` is the one
+  timestamp format everywhere: the server's local time WITH its UTC offset; `now_filename_stamp` is the
+  microsecond stamp in photo filenames.
 - **Jobs/sessions**: `ensure_job`, `create_session`, `get_session`, `find_open_session` (the
-  resume-within-24h lookup), `finalize_session`.
+  resume-within-24h lookup), `finalize_session`, `list_open_sessions` (one person's unsubmitted batches, any
+  age — Active Sessions), `list_all_open_sessions` (everyone's — the admin page), `delete_session`,
+  `rename_session_job` (corrected job number, merging consignments — §3.7), `recent_job_numbers` (the start
+  page's job-number autocomplete, most recently used first).
 - **Uploads**: `add_upload`, `get_upload`, `delete_upload`, `get_upload_by_filename`/`_by_thumb_filename`,
   `uploads_for_job` (everyone's photos), `uploads_for_session` (just this session's).
 - **Drive sync bookkeeping**: `pending_drive_uploads_grouped`, `mark_drive_synced`, `mark_drive_error`,
@@ -367,15 +415,17 @@ concurrent phones don't block each other. Grouped by area:
   `IntegrityError` fallback), `touch_consignment_contributor`, `_count_groups`/`group_item_ids`/
   `item_id_labels` (the scan-count feature — repeated Item IDs become `"value-N"` labels instead of
   duplicate entries), `add_consignment_item_id`/`decrement_consignment_item_id`,
-  `increment_photo_count`/`decrement_photo_count`, `synced_uploads_for_consignment`,
+  `increment_photo_count`/`decrement_photo_count`, `delete_consignment_if_orphaned` (after a session
+  delete), `synced_uploads_for_consignment`,
   `rehydrate_consignment` (rebuilds a row from Drive's copy, same race-safety pattern as
   `find_or_create_consignment`), `pending_sheet_log_batches`, `mark_sheet_synced`/`mark_sheet_error`.
 - **New Store Kits** (every writer is one `with conn:` transaction; `_helpers(conn, ...)` never commit):
   kits — `find_or_create_kit`, `get_kit`/`find_kit`, `list_open_kits`, `list_kits_for_job`,
-  `list_kit_names`, `kit_collaborators`/`merge_collaborators`, `delete_kit` (never-submitted only),
-  `finalize_kit` (one conditional UPDATE incl. `rev`), `reopen_kit`, `rename_kit`, `edit_kit` (job number + name); packs — `create_pack`,
+  `open_kit_names_for_job` (the `kit_choice` banner), `list_kit_names`, `kit_collaborators`/`merge_collaborators`, `delete_kit` (never-submitted only),
+  `finalize_kit` (one conditional UPDATE incl. `rev`), `reopen_kit`, `rename_kit`, `edit_kit` (job number + name); packs — `create_pack`, `packs_for_kit`, `get_pack`,
   `reserve_pack` (idle takeover with `force`), `release_packs_held_by`, `release_all_packs_held_by`,
-  `heartbeat_pack`, `held_pack`, `mark_packs_printed`; items — `add_pack_item`, `remove_pack_item`,
+  `heartbeat_pack`, `held_pack`, `held_packs_by_user` (the start page's "You still have Pack N open"),
+  `mark_packs_printed`; items — `add_pack_item`, `remove_pack_item`,
   `items_for_kit`; photos — `add_kit_upload` / `delete_kit_upload` (hold-checked in the statement),
   `add_kit_general_upload` / `delete_kit_general_upload` / `general_photo_uploaders` (no-pack kit photos);
   Sheet bookkeeping — `pending_kit_sheets`, `kit_upload_sync_counts`, `synced_kit_uploads`,
@@ -390,9 +440,11 @@ concurrent phones don't block each other. Grouped by area:
 
 Not functions so much as **named constants** everything else imports rather than hardcoding: batch
 size/count caps, timeouts, backoff steps (documented in `drive_sync.py`), category labels,
-`SESSION_LIFETIME_DAYS`, `LOGIN_MAX_ATTEMPTS`, cleanup timing, server bind address/port/thread count.
-Two functions: `update_admin_pin_in_env` (keeps `.env`'s `ADMIN_PIN` mirroring reality) and
-`load_drive_config` (reads `DRIVE_WEBAPP_URL`/`DRIVE_SHARED_SECRET`, or `None` if not configured yet).
+`SESSION_LIFETIME_DAYS`, `LOGIN_MAX_ATTEMPTS`, cleanup timing, server bind address/port/thread count
+(the main ones are listed in [§6](#6-configuration)). Three functions: `update_admin_pin_in_env` (keeps
+`.env`'s `ADMIN_PIN` mirroring reality), `load_drive_config` (reads `DRIVE_WEBAPP_URL`/`DRIVE_SHARED_SECRET`,
+or `None` if not configured yet) and `load_label_config` (the `LABEL_*` settings, re-read from `.env` each
+time labels are printed, checked and defaulted, with a warning for anything it had to correct).
 
 ### `drive_sync.py` — background Drive/Sheets relay
 
@@ -401,7 +453,7 @@ purposes:
 
 | Function | Purpose |
 |---|---|
-| `_backoff_seconds` | Exponential backoff ladder for retrying a failed row: 10s → 30s → 1m → 5m → 15m (capped). |
+| `_backoff_seconds` / `_mark_row_error` | Exponential backoff ladder for retrying a failed row: 10s → 30s → 1m → 5m → 15m (capped); `_mark_row_error` records the error and the next retry time on that one photo. |
 | `check_job_in_drive` | Synchronous (not part of the loop) — asks Apps Script if a job's Sheet already exists, for `app.py`'s rehydration path. |
 | `_split_into_batches` | Slices one job+category's pending rows into upload batches capped by real on-disk file size (primarily) or count (fallback). |
 | `_sync_batch` | One Apps Script `uploadBatch` call for a batch of photos; marks each row synced/errored independently based on its own per-file result. |
@@ -411,8 +463,9 @@ purposes:
 | `start_background_sync` / `stop_background_sync` | Thread lifecycle. |
 | `_kit_note` | "<Kit> · Pack N" / "<Kit> · no pack" — appended to a kit photo's Drive description (kit photos share `<Job>/Packing Photos`, category name overridden by `DRIVE_FOLDER_OVERRIDES`). |
 | `_kit_payload` / `_log_kit` / `_mark_kit_sheet_error` | Builds and sends a submitted kit's full Pack Log snapshot (`logKit`); waits for photos, writes partial Sheets after `KIT_SHEET_FORCE_AFTER_MIN`, gives up after `KIT_SHEET_GIVE_UP_HOURS`; re-reads the kit around the call so a reopen mid-write is never overwritten; sends `previousKitName` after a rename and `previousJobNumber` + `moveFileIds` after a job change. Prints a redeploy hint on `unknown or missing action`. |
-| `_labels_pdf_payload` / `_record_labels_result` | The kit's labels PDF, once per submission, with the previous PDF's id for `logKit_` to trash; records the new id (or says the Apps Script needs redeploying). |
-| `_call_web_app` | Every Web App call goes through it: says which of script.google.com / the googleusercontent.com result page answered, how long it took and what an error page said (not just "404" / "Expecting value"), and retries once after `QUICK_RETRY_DELAY_SEC` for the repeat-safe `uploadBatch` / `logKit`. |
+| `_requeue_finished_kit_sheets` | After a photo batch syncs: if one of those photos belongs to a submitted kit whose Pack Log was already written as final (it gave up after `KIT_SHEET_GIVE_UP_HOURS`), puts the kit's Sheet back to `pending` so it's rewritten with the late photo's link — otherwise the link would never appear and the local copy never be cleaned up. Never raises. |
+| `_labels_pdf_payload` / `_record_labels_result` / `labels_pdf_name` | The kit's labels PDF, once per submission, with the previous PDF's id for `logKit_` to trash; records the new id (or says the Apps Script needs redeploying). |
+| `_call_web_app` | Every Web App call goes through it: says which of script.google.com / the googleusercontent.com result page answered, how long it took and what an error page said (not just "404" / "Expecting value"), and retries once after `QUICK_RETRY_DELAY_SEC` (3 s) for the repeat-safe `uploadBatch` / `logKit`. Its helpers `_parse_web_app_response`, `_answered_by` and `_page_text` turn Google's two-hop redirect and its HTML error pages into one readable message. |
 
 ### `local_cleanup.py` — disk space reclamation
 
@@ -433,6 +486,19 @@ purposes:
 | `_kill_stale_port_holders` | Clears a leftover process from an earlier run before binding — see [§7](#7-limitations--known-tradeoffs) for why this is needed at all. |
 | `__main__` block | Runs the stale-port cleanup, DB init, admin bootstrap, starts both background threads, then `waitress.serve(...)`. |
 
+### `autostart.py` — start the server at logon, and keep it running
+
+Registers a Windows Task Scheduler task, **"Campaign Photo Portal"**, that runs as the logged-in user (no
+admin rights needed), and manages it from the command line — see [§8](#8-running--operating) for day-to-day use.
+
+| Function | Purpose |
+|---|---|
+| `run` | What the task runs, under `venv\Scripts\pythonw.exe` (no window). Exits at once if something already answers on `PORT` (`_is_serving`), so a running server — including one started by hand — is never touched. Otherwise starts `venv\Scripts\python.exe -u serve.py` with a hidden console (`CREATE_NO_WINDOW`, so serve.py's `netstat`/`tasklist` calls don't flash windows) and copies its output into the log. It's deliberately the same `python.exe` as `start_server.bat`, so the firewall permission phones already rely on covers it too. |
+| `_Log` | `logs/server.log`, one timestamped line at a time; past `MAX_LOG_BYTES` (5 MB) it becomes `server.log.1` and a fresh file starts, since drive-sync can log an error every few seconds while offline. |
+| `_task_xml` | The task definition: a **logon trigger** (start when you log in) plus a **time trigger repeating every `RECHECK_MINUTES`** (1) from install time — the restart-after-crash check. (A repeat on the logon trigger alone would only begin at the next logon.) `IgnoreNew` so only one copy runs, no 72 h execution limit, priority 5 (normal; Task Scheduler's default 7 is below-normal CPU and low disk priority), allowed on battery. |
+| `install` / `uninstall` | Register (or re-register) the task via `schtasks /Create /XML`, then start the server unless one is already running; remove the task and stop the server. |
+| `restart` / `stop` / `status` | Stop whatever python serves `PORT` (`_stop_server`, reusing `serve._find_python_pids_on_port`) and start the task again; stop it and disable the task; report the task state, whether the server answers, and the phone address. `_task_status` reads `schtasks /Query`; `status` waits out the second a per-minute check shows as "Running". |
+
 ### `apps-script/DriveUploader.gs` — the only Drive/Sheets access point
 
 A headless (no UI) Apps Script Web App. One shared secret gates every call; `doPost` dispatches on
@@ -451,7 +517,8 @@ A headless (no UI) Apps Script Web App. One shared secret gates every call; `doP
 | `getOrCreateLogSheet_` | Finds or creates `<job> - Photo Log`, with header row, frozen header, column widths, and wrap formatting. |
 | `guessMime_` / `jsonOut` | Small helpers — extension → MIME type, and JSON response formatting. |
 | `logKit_` | One New Store Kit's `<Job> - <Kit> - Pack Log` in the `<Job>` folder: tabs Packs (+ a "No pack" row) and Summary, FULLY rewritten each call (idempotent); text cells formatted `@` before writing so "09", "1/2" or "=x" stay literal; renames the old-name file after a kit rename, and after a job change moves it (and, via `moveKitPhotos_`, the kit's photos) from the old job's folders. With `labelsPdf`, `replaceKitLabelsPdf_` saves `<Job> - <Kit> - Labels.pdf` and then trashes the previous one. |
-| `getOrCreateJobRootFolder_` / `getOrCreateKitSpreadsheet_` / `findLiveFileByName_` / `findLiveFolderByName_` / `writeKitPacksTab_` / `writeKitSummaryTab_` | Its helpers (locks never nested; trashed files AND folders ignored everywhere, photos included; 0-row ranges never touched). |
+| `getOrCreateJobRootFolder_` / `getOrCreateKitSpreadsheet_` / `findLiveFileByName_` / `findLiveFolderByName_` / `writeKitPacksTab_` / `writeKitSummaryTab_` | Its helpers (locks never nested; trashed files AND folders ignored everywhere, photos included; 0-row ranges never touched). `getOrCreateJobRootFolderUnlocked_` is the lock-free core the two locked lookups share. |
+| `joinForCell_` / `toSheetDate_` / `kitSubmitCount_` | Pack Log cell helpers: a list joined for one cell, ending "& N more" rather than overflowing Sheets' cell limit; a portal timestamp as a real date cell (blank, never 1970, when missing); `submitCount` defaulted to 1 for an older portal. |
 | `testGetOrCreate`, `authTestDeleteMe`, `checkDuplicateFilenames` | Manual, editor-run-only diagnostics — never reachable via `doPost`. |
 
 ### `static/upload.js` — the upload page's client-side logic
@@ -525,27 +592,34 @@ Submit handler (`/api/finalize`).
 
 ### `static/topbar.js`
 
-One small behavior, shared across every page via the `_user_menu.html` partial: tap the name/icon to
-reveal the Change PIN/Admin/Log out dropdown, tap anywhere else to close it.
+Loaded on every page via the `_user_menu.html` partial. Three small behaviors:
+
+- **User menu**: tap the name/icon to reveal the Change PIN/Admin/Log out dropdown, tap anywhere else to
+  close it.
+- **Status-bar repaint**: on Android Chrome, coming back from the native Camera app can leave the system
+  status bar black; re-writing the `theme-color` meta tag when the tab becomes visible forces a repaint.
+- **Delete-session forms** in a list (Active Sessions, the admin's User Sessions) are sent with `fetch`
+  (`ajax=1`), so the row disappears in place instead of the page reloading back at the top.
 
 ### Templates
 
 | Template | Renders |
 |---|---|
 | `index.html` | Job-number + category start form; also owns the job-number live-validation JS (shake + custom bubble, no native browser tooltip — see the field's own inline comments for exactly which mobile-browser quirks that works around). |
-| `upload.html` | The camera/gallery page — hydrates `window.SESSION_ID`/`INITIAL_SECTIONS`/etc. from a `<script id="pageData">` tag's `data-*` attributes (not inline `{{ }}` in a `<script>` body — keeps editor syntax highlighting intact and avoids the `"` vs `'` attribute-quoting trap `tojson` output can hit). |
+| `upload.html` | The camera/gallery page, with the hidden "change job number" form (§3.7) — hydrates `window.SESSION_ID`/`INITIAL_SECTIONS`/etc. from a `<script id="pageData">` tag's `data-*` attributes (not inline `{{ }}` in a `<script>` body — keeps editor syntax highlighting intact and avoids the `"` vs `'` attribute-quoting trap `tojson` output can hit). |
 | `login.html` | The name+PIN state machine's one template, branching on `stage`. |
-| `admin.html` | User list + add-user form, approve/reset-PIN/toggle-role/delete actions. |
+| `admin.html` | User list + add-user form, approve/reset-PIN/toggle-role/delete actions, and User Sessions (everyone's unsubmitted batches, with Delete — §3.7). |
 | `change_pin.html` | Self-service PIN change. |
 | `gallery.html` | Read-only supervisor view (kit photos tagged "<Kit> · Pack N" / "no pack"). |
 | `labels_preview.html` | Pack labels as a printable page at the real label size, plus the raw ZPL. |
+| `_user_menu.html` | Shared dropdown partial, `{% include %}`d into every authenticated page's topbar. |
 
 `index.html` also carries the non-aggressive job-number autocomplete (≥3 typed characters that are still a
-valid `J`+digits prefix, prefix match, max 5, most recently used first, tap to fill — never auto-fills),
-the New Store Kit name field with open/submitted kit suggestions, the `kit_choice` banner, and the
-everyone-visible kit cards in Active Sessions (collaborators, who's working, "You still have Pack N open").
+valid `J`+digits prefix, prefix match, max 5, most recently used first, tap to fill — never auto-fills;
+source: `db.recent_job_numbers`), the New Store Kit name field with open/submitted kit suggestions, the
+`kit_choice` banner, and Active Sessions: the viewer's own unsubmitted batches (resume or delete) and the
+everyone-visible kit cards (collaborators, who's working, "You still have Pack N open").
 `upload.html` has a `kit_mode` branch that is only the skeleton kit.js renders into.
-| `_user_menu.html` | Shared dropdown partial, `{% include %}`d into every authenticated page's topbar. |
 
 ---
 
@@ -619,10 +693,15 @@ erDiagram
         text category
         text filename
         text thumb_filename
+        text uploaded_at
         text status "staged | finalized"
         text drive_status "pending | synced | error"
+        text drive_file_id "set once synced - the Drive link"
+        text retry_after "backoff after a Drive error"
+        text local_deleted_at "set by local_cleanup"
         text sheet_status "not_applicable | pending | synced | error"
         integer consignment_id FK
+        integer pack_id FK "kits only, NULL = kit photo"
     }
     consignments {
         integer id PK
@@ -669,6 +748,20 @@ see `.env.example`):
 | `LABEL_ORIENTATION` | `landscape` (default, long side across as it's read: turned 90° on 100 × 150 stock, as it feeds on already-wide stock), `landscape-flipped` (the other way up), or `portrait`. |
 | `LABEL_FONT_FILE` | The .ttf labels are drawn with; default Arial Black `C:\Windows\Fonts\ariblk.ttf`. |
 
+The main constants in `config.py` itself (edit, then `autostart.py restart`):
+
+| Constant | Default | Controls |
+|---|---|---|
+| `HOST` / `PORT` / `WAITRESS_THREADS` | `0.0.0.0` / `5000` / `16` | Where the server listens, and how many requests it handles at once. |
+| `SESSION_LIFETIME_DAYS` / `LOGIN_MAX_ATTEMPTS` | `365` / `5` | How long a login lasts; wrong PINs before an account locks. |
+| `SESSION_RESUME_WINDOW_HOURS` | `24` | How recent an open batch must be for `/start` to drop you straight back into it. |
+| `THUMB_MAX_PX` | `480` | On-page thumbnail size. |
+| `DRIVE_SYNC_INTERVAL_SEC` | `5` | How often the Drive sync loop runs. |
+| `DRIVE_UPLOAD_BATCH_MAX_BYTES` / `_MAX_COUNT` | 20 MB / `20` | One `uploadBatch` call's size limit (whichever comes first). |
+| `DRIVE_SHEET_BATCH_CAP` / `DRIVE_BATCH_TIMEOUT_SEC` | `20` / `240` | Consignments per `logConsignments` call; how long to wait for any batch call. |
+| `LOCAL_CLEANUP_AFTER_DAYS` / `LOCAL_CLEANUP_INTERVAL_SEC` | `2` / `3600` | How long a synced photo is kept locally; how often cleanup runs. |
+| `CATEGORIES` | `packing` / `dispatch` / `new_store_kits` | Photo types: the slug is the local folder and DB value, the label ("Packing Photos" …) is shown in the UI and names the Drive folder (`DRIVE_FOLDER_OVERRIDES` aside). |
+
 New Store Kit knobs in `config.py`: `PACK_IDLE_TAKEOVER_SEC` (600), `KIT_POLL_INTERVAL_SEC` (4),
 `KIT_SHEET_FORCE_AFTER_MIN` (30), `KIT_SHEET_PARTIAL_RETRY_MIN` (10), `KIT_SHEET_GIVE_UP_HOURS` (24),
 `KIT_NAME_MAX_LEN` (60), `DRIVE_FOLDER_OVERRIDES` (kit photos → "Packing Photos"). Label font sizes
@@ -689,7 +782,8 @@ Being direct about what this system does **not** solve, rather than only what it
   there's no clever non-admin substitute. Without admin, the best available option is "launches the
   moment this Windows account logs in" (Task Scheduler's "At log on" trigger), which still depends on
   either a human logging in or the machine already being configured for auto-logon (itself an
-  admin-only setting).
+  admin-only setting). That's what `autostart.py` sets up: the portal is down from a reboot (e.g. a
+  Windows update) until someone logs in, and stops when that user signs out (a locked screen is fine).
 - **Apps Script, not the Drive/Sheets API directly.** Every Drive/Sheets operation is proxied through
   one Apps Script Web App. That means: a 6-minute hard execution cap per call (the reason uploads are
   batched by size rather than sent one-by-one or all-at-once), no real HTTP status codes (just an
@@ -722,8 +816,8 @@ Being direct about what this system does **not** solve, rather than only what it
   can reach `/login` can type any first name and request an account (subject to admin approval) —
   there's no identity verification beyond an admin recognizing the name before approving it.
 - **Windows-specific throughout.** The Mobile Hotspot address detection, the launcher-chain/stale-port
-  workaround, and the NSSM/Task Scheduler guidance are all Windows-only; none of this has been
-  written with cross-platform hosting in mind.
+  workaround, `autostart.py`'s Task Scheduler setup and the label printing (`winspool.drv`) are all
+  Windows-only; none of this has been written with cross-platform hosting in mind.
 - **New Store Kits need the Apps Script redeployed.** `logKit` (and later the "No pack" row, "Times
   submitted", Sheet rename and the labels PDF) exist only in the updated `DriveUploader.gs`. Until it's redeployed as a New
   version, kit photos still sync (they use the existing upload action), but kit Sheets just retry with a
@@ -739,3 +833,51 @@ Being direct about what this system does **not** solve, rather than only what it
   service under another account, the printer must be installed for that account (or for all users).
 - **Thumbnails of images Pillow can't read** (e.g. HEIC without a plugin) fall back to the full image, which
   is slower on a phone. Browsers usually hand over JPEGs anyway.
+
+---
+
+## 8. Running & operating
+
+Everyday commands, run in PowerShell from the project folder (`C:\Users\sbasnet\Campaign-Photo-Portal`).
+
+**Starting the server.** Normally nothing: `autostart.py`'s task starts it in the background when you log
+in to Windows and brings it back within a minute if it stops (see [`autostart.py`](#autostartpy--start-the-server-at-logon-and-keep-it-running)).
+Starting it by hand (`start_server.bat` or `py serve.py`) still works and takes over from the background
+copy (serve.py stops whatever python holds the port); the background one returns within a minute of
+that window closing. Prefer `autostart.py restart` — a hand-started server stops when its window closes,
+and Ctrl+C can leave a hidden process holding the port (see `serve.py`).
+
+| To… | Run |
+|---|---|
+| Set up auto-start (or rebuild the task after editing `autostart.py`) | `venv\Scripts\python autostart.py install` |
+| See whether it's running, and the address for phones | `venv\Scripts\python autostart.py status` |
+| Apply a change to code, `.env` or `config.py` | `venv\Scripts\python autostart.py restart` |
+| Stop it (stays stopped across logins until `restart`) | `venv\Scripts\python autostart.py stop` |
+| Remove auto-start completely | `venv\Scripts\python autostart.py uninstall` |
+| Read the server's output | `Get-Content logs\server.log -Tail 30` (background server only; a hand-started one prints to its window) |
+
+**After changing the Apps Script.** Editing `DriveUploader.gs` changes nothing until it's deployed:
+**Deploy → Manage deployments → ✏️ → Version: New version → Deploy** keeps the same URL. A brand-new
+deployment gets a NEW URL: put it in `.env`'s `DRIVE_WEBAPP_URL`, then `autostart.py restart` (the URL is
+read at startup).
+
+**Re-sending a kit's Pack Log** (e.g. it was written by an out-of-date Apps Script, or to the wrong place).
+A Pack Log write is a full overwrite, so repeating it is always safe. This puts the kit's Sheet back to
+`pending`; the running server rewrites it — and the labels PDF if this submission doesn't have one yet —
+within seconds:
+
+```powershell
+venv\Scripts\python -c "import db, kits; k = db.find_kit('J479141', kits.normalize_kit_name('Rebel Chatswood Christmas Kit')[1]); db.mark_kit_sheet_written(k['session_id'], [], k['sheet_synced_count'], False); print('queued', k['kit_name'])"
+```
+
+Check with `db.get_kit(<session_id>)['sheet_status']` — back to `synced`, with `sheet_error` empty, once
+written. Only submitted kits are picked up (`db.pending_kit_sheets`); a reopened kit is rewritten on its
+next Final Submit anyway.
+
+**Forgotten PINs.** Anyone but the bootstrap admin: an admin taps **Reset PIN** on the Admin page, and
+the user chooses a new PIN at their next login (this also clears a lockout). The bootstrap admin
+(`ADMIN_NAME`): the current PIN is always in `.env`'s `ADMIN_PIN`. If no admin can log in at all:
+
+```powershell
+venv\Scripts\python -c "import db; u = db.find_user_by_name('Sujan'); db.reset_pin(u['id']); print('Reset', u['name'])"
+```
