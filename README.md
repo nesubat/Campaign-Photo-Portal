@@ -120,8 +120,10 @@ live in `uploads/<JobNumber>/new_store_kits/`, but in Drive the photos go into t
 job's normal **`<JobNumber>/Packing Photos/`** folder (each file's description says
 which kit and pack it belongs to), and each kit gets its own report sheet directly
 in **`<JobNumber>/`**: `<JobNumber> - <Kit name> - Pack Log` (tab *Packs*: one row
-per pack with its item numbers, first/last edit, collaborators and photo links, plus
-a "No pack" row for kit photos; tab *Summary*: who submitted it and what's missing).
+per pack with its item numbers, first/last edit, collaborators and photo links; tab
+*Summary*: who submitted it and what's missing). Pack photos are named
+`pack<N>-<name>-<timestamp>`; photos in the **Kit photos** section (no pack) go to
+the same Drive folder but aren't listed in the Pack Log.
 Next to it, `<JobNumber> - <Kit name> - Labels.pdf` holds the kit's pack labels (one
 page per pack, exactly as they print). Both are only written after **Final Submit**;
 when a reopened kit is submitted again the sheet is rewritten and a new labels PDF

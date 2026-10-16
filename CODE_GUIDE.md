@@ -80,14 +80,14 @@ The Python app has **zero direct Google API credentials**. Every Drive/Sheets op
 | **Job** | One packing/dispatch job, identified by job number (`J` + 6 digits). Just a `jobs` row + a folder namespace on disk/Drive. |
 | **Session** | One person's open work-batch for one job+category. Holds photos until "Submit Batch" finalizes it. Auto-resumes if reopened within `SESSION_RESUME_WINDOW_HOURS`. |
 | **Consignment** | (Packing only, opt-in "keep logs") One Consignment #/Store name scanned during a session — has its own Item IDs, contributor list, and photo count, mirrored to one row in that job's Google Sheet. |
-| **Upload** | One photo. Always named `<employee>-<microsecond-timestamp>.<ext>` regardless of consignment tagging — the filename is never overloaded with business meaning. |
+| **Upload** | One photo. Named `<employee>-<microsecond-timestamp>.<ext>` regardless of consignment tagging. The one exception is a New Store Kit **pack** photo, `pack<N>-<employee>-<microsecond-timestamp>.<ext>`, so its pack can be read off the file in Drive (pack numbers never change). |
 | **Finalize** | Tapping "Submit Batch" — flips a session's uploads from `staged` to `finalized`. Only finalized uploads are ever picked up for Drive sync. |
 | **Drive sync** | Fully asynchronous background process. The user never waits for it — a photo is "done" the instant it lands on local disk. |
 | **New Store Kit** | Photo type `new_store_kits`. ONE shared `sessions` row + one `kits` row, identified by job number + kit name (case/space-insensitive). Everyone who starts the same job + name joins the same kit; a submitted kit is **reopened** instead. Visible to every user in Active Sessions. |
 | **Pack** | A numbered box inside a kit (1..N, `MAX+1`, never renumbered — boxes may already be labelled). Holds item numbers + photos. |
 | **Item number** | What's typed into a pack: a **series** (`J` + 6 digits, or any free-text description) plus an optional digits-only **index** (`J456781-02`). Shown grouped per series: `J456781-02, 05, 06, 08 & 09`. |
 | **Reservation** | Only the person holding a pack can change it. Sticky: released by Save Pack, opening/creating another pack, Home/Cancel, browser Back, log out, or the start page's [Release]. After `PACK_IDLE_TAKEOVER_SEC` without a heartbeat, someone else may take it over (with a confirm). Any held pack blocks Final Submit. |
-| **Kit photo** | A photo in a kit that belongs to NO pack (`uploads.pack_id` NULL) — the kit page's "Kit photos" section, no reservation needed. |
+| **Kit photo** | A photo in a kit that belongs to NO pack (`uploads.pack_id` NULL) — the kit page's "Kit photos" section, no reservation needed. Goes to Drive only: not listed in the Pack Log (`sheet_status` `not_applicable`). |
 | **Report** | "J456789 - Missing numbers: 02, 03, 07 & 08 until 09." (or "J456789 - Packed everything until 09.") per J-series, over SAVED packs only. |
 | **Pack label** | ZPL label printed on the server's Zebra: the kit name exactly as typed / "Pack N" / the pack's item lines. |
 
@@ -248,8 +248,9 @@ flowchart TD
   `kits.sheet_job_number` remembers where the Sheet still is, so the old job + name stays reserved until then.
 - **Drive layout.** Kit photos go to the job's normal `<Job>/Packing Photos/` folder
   (`DRIVE_FOLDER_OVERRIDES`), each described "<Kit> · Pack N" or "<Kit> · no pack". The Pack Log sits in `<Job>/`:
-  tab **Packs** (one row per pack plus a "No pack" row for kit photos) and tab **Summary** (submitter, times
-  submitted, the missing-numbers report). It is written once every photo has synced; if photos are still
+  tab **Packs** (one row per pack) and tab **Summary** (submitter, times submitted, the missing-numbers
+  report). Kit photos (no pack) are in Drive only: the portal sends `generalPhotos: null`, so `logKit_` writes
+  no "No pack" row, and the Sheet never waits for them. It is written once every pack photo has synced; if photos are still
   missing after `KIT_SHEET_FORCE_AFTER_MIN` a partial Sheet is written and refreshed, and after
   `KIT_SHEET_GIVE_UP_HOURS` the last write stands (with a note). Folders and files sitting in Drive's trash
   are never written into (a fresh live one is made).
@@ -518,7 +519,7 @@ A headless (no UI) Apps Script Web App. One shared secret gates every call; `doP
 | `resizeSheetColumns_` | One-off formatting pass: auto-fits the plain-text columns, pins Photo Links to a fixed width (auto-fit fights its line-wrapped long URLs otherwise). |
 | `getOrCreateLogSheet_` | Finds or creates `<job> - Photo Log`, with header row, frozen header, column widths, and wrap formatting. |
 | `guessMime_` / `jsonOut` | Small helpers — extension → MIME type, and JSON response formatting. |
-| `logKit_` | One New Store Kit's `<Job> - <Kit> - Pack Log` in the `<Job>` folder: tabs Packs (+ a "No pack" row) and Summary, FULLY rewritten each call (idempotent); text cells formatted `@` before writing so "09", "1/2" or "=x" stay literal; renames the old-name file after a kit rename, and after a job change moves it (and, via `moveKitPhotos_`, the kit's photos) from the old job's folders. With `labelsPdf`, `replaceKitLabelsPdf_` saves `<Job> - <Kit> - Labels.pdf` and then trashes the previous one. |
+| `logKit_` | One New Store Kit's `<Job> - <Kit> - Pack Log` in the `<Job>` folder: tabs Packs (+ a "No pack" row when sent `generalPhotos` — the portal no longer sends any) and Summary, FULLY rewritten each call (idempotent); text cells formatted `@` before writing so "09", "1/2" or "=x" stay literal; renames the old-name file after a kit rename, and after a job change moves it (and, via `moveKitPhotos_`, the kit's photos) from the old job's folders. With `labelsPdf`, `replaceKitLabelsPdf_` saves `<Job> - <Kit> - Labels.pdf` and then trashes the previous one. |
 | `getOrCreateJobRootFolder_` / `getOrCreateKitSpreadsheet_` / `findLiveFileByName_` / `findLiveFolderByName_` / `writeKitPacksTab_` / `writeKitSummaryTab_` | Its helpers (locks never nested; trashed files AND folders ignored everywhere, photos included; 0-row ranges never touched). `getOrCreateJobRootFolderUnlocked_` is the lock-free core the two locked lookups share. |
 | `joinForCell_` / `toSheetDate_` / `kitSubmitCount_` | Pack Log cell helpers: a list joined for one cell, ending "& N more" rather than overflowing Sheets' cell limit; a portal timestamp as a real date cell (blank, never 1970, when missing); `submitCount` defaulted to 1 for an older portal. |
 | `testGetOrCreate`, `authTestDeleteMe`, `checkDuplicateFilenames` | Manual, editor-run-only diagnostics — never reachable via `doPost`. |

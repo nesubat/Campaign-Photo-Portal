@@ -1091,8 +1091,10 @@ def _kit_upload(sess):
     single byte is written, and checked again atomically by the INSERT - if
     the pack was lost, or the kit submitted/deleted, during the ~1s the file
     write takes, the files just written are removed again so nothing is left
-    that no pack owns. The file is named after, and credited to, whoever is
-    logged in (a kit's session belongs to its creator, but everyone adds to it)."""
+    that no pack owns. A pack photo is named "pack<N>-<who>-<timestamp>" so
+    its pack can be read off the file in Drive (pack numbers never change);
+    it's named after, and credited to, whoever is logged in (a kit's session
+    belongs to its creator, but everyone adds to it)."""
     session_id = sess["id"]
     employee_name = g.user["name"]
     if db.get_kit(session_id) is None:
@@ -1113,9 +1115,15 @@ def _kit_upload(sess):
 
     if not db.heartbeat_pack(pack_id, session_id, employee_name):
         return _kit_hold_failure(sess, pack_id)
+    pack = db.get_pack(pack_id)
+    if pack is None:
+        return _kit_hold_failure(sess, pack_id)
 
     job_number, category = sess["job_number"], sess["category"]
-    unique_name = f"{sanitize_for_filename(employee_name)}-{db.now_filename_stamp()}.{_upload_ext(file)}"
+    unique_name = (
+        f"pack{pack['pack_number']}-{sanitize_for_filename(employee_name)}-"
+        f"{db.now_filename_stamp()}.{_upload_ext(file)}"
+    )
     thumb_name = _save_photo_files(job_number, category, unique_name, file.read())
 
     upload_id = db.add_kit_upload(

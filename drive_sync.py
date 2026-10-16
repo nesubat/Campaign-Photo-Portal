@@ -371,8 +371,8 @@ def _sync_batch(rows, cfg, error_counts):
         if file_result and file_result.get("ok"):
             db.mark_drive_synced(row["id"], file_result.get("fileId", ""))
             error_counts.pop(row["id"], None)
-            if _row_value(row, "kit_name"):
-                kit_sessions_synced.add(row["session_id"])
+            if _row_value(row, "kit_name") and _row_value(row, "pack_id") is not None:
+                kit_sessions_synced.add(row["session_id"])  # only pack photos are in the Sheet
         else:
             error_text = (file_result or {}).get("error", "no result returned for this file")
             _mark_row_error(row, error_text, error_counts)
@@ -538,22 +538,9 @@ def _kit_payload(kit_row, cfg):
             "photoLinks": [_drive_view_url(row["drive_file_id"]) for row in pack_uploads],
         })
 
-    # Kit photos that belong to no pack: one extra "No pack" row in the Sheet
-    # (see logKit_), so every photo of the kit is linked from its Pack Log.
-    general_rows = links_by_pack.get(None, [])
-    sent_upload_ids.extend(row["id"] for row in general_rows)
-    general_payload = None
-    if general_rows:
-        uploaders = []
-        for row in general_rows:
-            if row["employee_name"] not in uploaders:
-                uploaders.append(row["employee_name"])
-        general_payload = {
-            "firstEdit": min(row["uploaded_at"] for row in general_rows),
-            "lastEdit": max(row["uploaded_at"] for row in general_rows),
-            "contributors": uploaders,
-            "photoLinks": [_drive_view_url(row["drive_file_id"]) for row in general_rows],
-        }
+    # Kit photos that belong to no pack only go to Drive (Packing Photos) -
+    # they're not listed in the Sheet, so no "No pack" row. They still move
+    # with the kit after a job change (move_ids below covers every photo).
 
     previous_job = _previous_sheet_job_number(kit_row)
     move_ids = []
@@ -590,7 +577,9 @@ def _kit_payload(kit_row, cfg):
         "finalizedAt": kit_row["finalized_at"],
         "submitCount": _submit_count(kit_row),
         "packs": packs_payload,
-        "generalPhotos": general_payload,
+        # Always null: logKit_ writes a "No pack" row only when given photos
+        # here, so this keeps that row out without redeploying the script.
+        "generalPhotos": None,
         "report": report_payload,
     }
     return payload, sent_upload_ids

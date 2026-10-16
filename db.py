@@ -329,6 +329,15 @@ def _migrate(conn):
             WHERE submit_count = 0
               AND EXISTS (SELECT 1 FROM sessions WHERE id = kits.session_id AND finalized_at IS NOT NULL)"""
     )
+    # Kit photos in no pack used to be listed in a "No pack" row of the Pack
+    # Log; now they only go to Drive. One still waiting for that row would
+    # never get it, and so never be cleaned up locally - nothing to wait for.
+    # Ones whose row was already written stay 'synced'. Safe to rerun.
+    conn.execute(
+        """UPDATE uploads SET sheet_status = 'not_applicable', sheet_error = NULL, sheet_retry_after = NULL
+            WHERE pack_id IS NULL AND sheet_status IN ('pending', 'error')
+              AND session_id IN (SELECT session_id FROM kits)"""
+    )
     conn.commit()
     _import_legacy_employees(conn)
 
@@ -1906,14 +1915,16 @@ def add_kit_general_upload(session_id, job_number, employee_name, category, file
     delivery note... No pack reservation is involved (several people can add
     these at once); the only guard, checked in the INSERT itself like
     add_kit_upload, is that the kit is still unsubmitted. Returns the upload
-    id, or None (the caller deletes the files it wrote)."""
+    id, or None (the caller deletes the files it wrote). These go to Drive
+    but are NOT listed in the kit's Pack Log Sheet, so sheet_status is
+    'not_applicable' from the start: nothing to wait for before local cleanup."""
     conn = get_conn()
     with conn:
         cur = conn.execute(
             f"""INSERT INTO uploads
                 (session_id, job_number, employee_name, category, filename, thumb_filename, uploaded_at,
                  pack_id, sheet_status)
-                SELECT ?, ?, ?, ?, ?, ?, ?, NULL, 'pending'
+                SELECT ?, ?, ?, ?, ?, ?, ?, NULL, 'not_applicable'
                  WHERE {_KIT_OPEN}""",
             (session_id, job_number, employee_name, category, filename, thumb_filename, now_iso(), session_id),
         )
@@ -2029,13 +2040,14 @@ def pending_kit_sheets():
 
 
 def kit_upload_sync_counts(session_id):
-    """(total, synced) over the kit's submitted photos - the Sheet is only
-    "complete" once every one of them has a Drive link to list."""
+    """(total, synced) over the kit's submitted PACK photos - the Sheet is
+    only "complete" once every one of them has a Drive link to list. Kit
+    photos in no pack aren't in the Sheet, so it never waits on them."""
     conn = get_conn()
     row = conn.execute(
         """SELECT COUNT(*) AS total,
                   COALESCE(SUM(CASE WHEN drive_status = 'synced' THEN 1 ELSE 0 END), 0) AS synced
-           FROM uploads WHERE session_id = ? AND status = 'finalized'""",
+           FROM uploads WHERE session_id = ? AND status = 'finalized' AND pack_id IS NOT NULL""",
         (session_id,),
     ).fetchone()
     return row["total"], row["synced"]
