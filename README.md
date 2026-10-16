@@ -204,10 +204,19 @@ in order of effort:
 ## Known limits worth knowing
 
 - **Hotspot device cap**: Windows Mobile Hotspot supports up to 8
-  simultaneous connections. For more than that, you'd need a real WiFi
-  access point instead - the app itself has no such limit.
+  simultaneous connections. For 10-13 phones you need a real Wi-Fi router or
+  access point - the app itself has no such limit (load-tested with 13 phones
+  x 100 photos at once: nothing lost; the Wi-Fi speed is what sets the pace).
 - **Drive storage**: mirrors to whatever Google account owns the Apps
-  Script deployment - keep an eye on that account's Drive quota over time.
+  Script deployment. A busy day (~700 photos) is ~3.5 GB, ~100 GB a month -
+  check that account's storage plan.
+- **Keep the PC on and keep 50 GB free**: local copies are deleted 2 days after
+  they reach Drive, at most 50 photos an hour, so a PC that is switched off at
+  night slowly fills its disk. Normal use needs ~7-10 GB; a week of Drive outage ~25 GB.
+- **Don't open `data/portal.db` in another program while the portal runs**, and
+  back it up with the portal stopped.
+
+The full capacity / worst-case test results are in CODE_GUIDE.md section 8.
 - **One machine**: this is a single-instance local app (SQLite + local
   disk), matching the "one PC on the network" design - it isn't built to
   run on multiple machines behind a load balancer.

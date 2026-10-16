@@ -60,6 +60,7 @@ def _prune_empty_dirs():
 
 def _run_loop():
     while not _stop_event.is_set():
+        db.rollback_if_open()  # a clean connection every pass (see db.rollback_if_open)
         cutoff = (
             datetime.now(timezone.utc).astimezone() - timedelta(days=LOCAL_CLEANUP_AFTER_DAYS)
         ).isoformat(timespec="seconds")
@@ -68,8 +69,10 @@ def _run_loop():
                 try:
                     _cleanup_one(row)
                 except Exception as exc:  # noqa: BLE001 - log and keep the loop alive
+                    db.rollback_if_open()
                     print(f"[local-cleanup] upload {row['id']} failed: {exc}")
         except Exception as exc:  # noqa: BLE001 - never let the worker thread die
+            db.rollback_if_open()
             print(f"[local-cleanup] loop error: {exc}")
 
         try:
