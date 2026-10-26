@@ -804,3 +804,103 @@ html.kit-mode, html.kit-mode body { overscroll-behavior-y: contain; }
 .kit-capture-bar .btn { min-height: 48px; padding: 12px 8px; touch-action: manipulation; }
 .kit-uploading-strip { padding: 0; }
 .kit-uploading-strip .thumb { margin-top: 0; }
+
+/* --- Photo viewer (viewer.js): a tapped photo, full screen in the same tab --- */
+.photo-viewer {
+  border: none; padding: 0; margin: 0; inset: 0;
+  width: 100%; height: 100%; max-width: none; max-height: none; height: 100dvh;
+  background: #111; color: #fff; overflow: hidden;
+}
+.photo-viewer[open] { display: flex; flex-direction: column; }
+.photo-viewer::backdrop { background: #111; }
+.photo-viewer-bar {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px;
+}
+.photo-viewer-download {
+  min-height: 44px; display: inline-flex; align-items: center; padding: 0 18px; border-radius: 10px;
+  background: #fff; color: var(--ink); text-decoration: none;
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 15px; font-weight: 600;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.photo-viewer-close {
+  flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; border: none; padding: 0;
+  background: rgba(255,255,255,0.2); color: #fff; font-size: 26px; line-height: 1; cursor: pointer;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.photo-viewer-stage {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0 8px;
+}
+.photo-viewer-img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.photo-viewer-img.is-preview { opacity: 0.75; }
+.photo-viewer-status { flex-shrink: 0; text-align: center; font-size: 13px; opacity: 0.8; padding: 6px 16px 0; }
+.photo-viewer-caption {
+  flex-shrink: 0; text-align: center; font-size: 13px; line-height: 1.4; opacity: 0.85; overflow-wrap: anywhere;
+  padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 12px);
+}
+
+/* --- My Contributions (contributions.html, contribution_job.html) --- */
+.contrib-link { margin-top: 14px; }
+/* The list: one row per job, inbox-style - hairlines between rows, no boxes, no
+   pills. Colour only where it means something: a kit's "Packed so far" (red:
+   numbers missing, green: complete) and its Submitted / Reopened state. */
+.cl-page { background: var(--surface); }
+.cl-list { list-style: none; margin: 0 auto; padding: 0 0 48px; max-width: 640px; }
+.cl-row { border-bottom: 1px solid var(--line); }
+.cl-main, .cl-kit {
+  display: flex; flex-direction: column; gap: 4px; padding: 14px 16px;
+  color: var(--ink); text-decoration: none; -webkit-tap-highlight-color: transparent;
+}
+.cl-kit { padding-top: 10px; margin-left: 16px; padding-left: 12px; border-top: 1px solid var(--line); }
+.cl-main:active, .cl-kit:active, .cl-link:active { background: var(--surface-muted); }
+.cl-main:focus-visible, .cl-kit:focus-visible, .cl-link:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.cl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cl-title {
+  min-width: 0; overflow-wrap: anywhere;
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 18px; font-weight: 600; line-height: 1.25;
+}
+.cl-kit-name {
+  min-width: 0; overflow-wrap: anywhere;
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 16px; font-weight: 600;
+}
+.cl-when { flex-shrink: 0; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.cl-kit-go { flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.cl-meta { font-size: 14px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.cl-state { font-weight: 600; color: var(--ink); }
+.cl-state.is-done { color: var(--good); }
+.cl-state.is-warn { color: var(--warn); }
+.cl-report { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.cl-report-line { font-size: 15px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.cl-report-line.is-missing { color: var(--bad); }
+.cl-report-line.is-done { color: var(--good); }
+.cl-report-none { font-size: 13px; color: var(--text-muted); }
+.cl-people { font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; margin-top: 2px; }
+.cl-links { display: flex; flex-wrap: wrap; gap: 0 20px; padding: 0 16px 6px; margin-top: -6px; }
+.cl-link {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
+  color: var(--ink); font-size: 14px; font-weight: 600; text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.cl-link-n { color: var(--text-muted); font-weight: 500; }
+.cl-chev { flex-shrink: 0; color: var(--text-muted); }
+.cl-empty { padding: 40px 24px; text-align: center; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
+.cl-empty p { margin: 0 0 6px; }
+.cl-empty-title { color: var(--ink); font-family: 'Jost', 'Work Sans', sans-serif; font-size: 17px; font-weight: 600; }
+.contrib-topbar .topbar-left, .contrib-topbar .topbar-left > div { min-width: 0; }
+.contrib-topbar .counter { white-space: nowrap; }
+.contrib-job-head { display: flex; flex-direction: column; gap: 4px; padding: 6px 16px 0; }
+.contrib-back {
+  align-self: flex-start; min-height: 44px; display: inline-flex; align-items: center;
+  color: var(--ink); font-size: 14px; font-weight: 600;
+}
+.contrib-section { scroll-margin-top: 72px; }
+.contrib-section-heading {
+  display: flex; align-items: baseline; gap: 8px; margin: 20px 16px 10px;
+  font-size: 17px; font-weight: 600; overflow-wrap: anywhere;
+}
+.contrib-section-count { font-family: 'Work Sans', sans-serif; font-size: 14px; font-weight: 500; color: var(--text-muted); }
+.contrib-gallery { padding-bottom: 8px; }
+.contrib-kit-section { border-top: 1px solid var(--line); }
+.contrib-kit-summary { display: flex; flex-direction: column; gap: 6px; padding: 0 16px 12px; margin-top: -4px; }
+.contrib-open-kit { align-self: flex-start; min-height: 44px; display: inline-flex; align-items: center; }
+.contrib-page-end { height: 40px; }

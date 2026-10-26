@@ -17,3 +17,6 @@ env/
 
 # Background server output - see autostart.py
 logs/
+
+# Playwright MCP (.mcp.json) output - snapshots, screenshots, console logs
+.playwright-mcp/

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#231f20">
+  <title>{{ job_number }} - Contributions</title>
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
+</head>
+<body>
+  <header class="topbar contrib-topbar">
+    <div class="topbar-left">
+      <a href="/" class="home-link" title="Back to main page">🏠</a>
+      <div>
+        <div class="job">{{ job_number }}</div>
+        <div class="who-sub">Last {{ days }} days</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="counter">{{ photo_count }} photo(s)</div>
+      {% include "_user_menu.html" %}
+    </div>
+  </header>
+
+  <div class="contrib-job-head">
+    <a href="/contributions" class="contrib-back">← {{ 'All' if current_user.role == 'admin' else 'My' }} Contributions</a>
+    {% if contributors %}<div class="cl-people">{{ contributors|join(', ') }}</div>{% endif %}
+  </div>
+
+  {#- Everything added to this job in the window, everyone's, newest first - only the kinds it actually has:
+      Packing, Dispatch, then each New Store Kit (its state, its "Packed so far", its photos and the way into
+      the kit page - the one place a kit is changed). A photo's label says only who took it (and its pack);
+      the viewer's caption carries the rest. Tapping a photo opens it right here (viewer.js) with Download. -#}
+  {% macro photo_tile(p) -%}
+  {% set full_url = '/media/' ~ p['job_number'] ~ '/' ~ p['category'] ~ '/' ~ p['filename'] %}
+  {% set where = ('Pack ' ~ p['pack_number']) if p['pack_number'] else ('no pack' if p['kit_name'] else p['consignment_value']) %}
+  <a href="{{ full_url }}" target="_blank" rel="noopener" class="thumb"
+     data-caption="{{ p['employee_name'] }}{% if where %} · {{ where }}{% endif %} · {{ p['uploaded_at']|started_at }}">
+    {% if p['local_deleted_at'] %}
+    <div class="thumb-cleaned">☁️<br>View on Drive</div>
+    {% else %}
+    <img src="/media/{{ p['job_number'] }}/{{ p['category'] }}/thumbs/{{ p['thumb_filename'] }}" loading="lazy" alt="">
+    {% endif %}
+    <span class="tag">{% if p['pack_number'] %}Pack {{ p['pack_number'] }} · {% endif %}{{ p['employee_name'] }}{% if p['status'] != 'finalized' %} · not submitted{% endif %}</span>
+  </a>
+  {%- endmacro %}
+
+  {% for s in sections if s['photos'] %}
+  <section class="contrib-section" id="{{ s['key'] }}">
+    <h2 class="contrib-section-heading">{{ s['label'] }} <span class="contrib-section-count">{{ s['photos']|length }}</span></h2>
+    <div class="gallery contrib-gallery">
+      {% for p in s['photos'] %}{{ photo_tile(p) }}{% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+
+  {% for k in job_kits %}
+  <section class="contrib-section contrib-kit-section">
+    <h2 class="contrib-section-heading">{{ k['kit_name'] }}</h2>
+    <div class="contrib-kit-summary">
+      <div class="cl-meta">New Store Kit ·
+        {% if k['submitted'] %}<span class="cl-state is-done">Submitted</span>
+        {%- elif k['reopened'] %}<span class="cl-state is-warn">Reopened</span>
+        {%- else %}<span class="cl-state">Open</span>{% endif %} · {{ k['pack_count'] }} pack{{ 's' if k['pack_count'] != 1 }} · {{ k['photo_count'] }} photo{{ 's' if k['photo_count'] != 1 }}</div>
+      <div class="cl-report">
+        {% for r in k['report'] %}
+        <div class="cl-report-line {{ 'is-done' if r['complete'] else 'is-missing' }}">{{ r['text'] }}</div>
+        {% else %}
+        <div class="cl-report-none">No item numbers packed yet</div>
+        {% endfor %}
+        {% if k['open_packs'] %}
+        <div class="cl-report-none">Still open, not counted:
+          {%- for p in k['open_packs'] %} Pack {{ p['number'] }} ({{ p['by'] }}){{ ',' if not loop.last }}{% endfor %}</div>
+        {% endif %}
+      </div>
+      <a href="{{ k['url'] }}" class="btn primary small contrib-open-kit">Open kit</a>
+    </div>
+    {% if k['photos'] %}
+    <div class="gallery contrib-gallery">
+      {% for p in k['photos'] %}{{ photo_tile(p) }}{% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  {% if not photo_count and not job_kits %}
+  <div class="cl-empty"><p class="cl-empty-title">No photos in the last {{ days }} days</p></div>
+  {% endif %}
+  <div class="contrib-page-end"></div>
+
+  <script src="{{ asset('viewer.js') }}"></script>
+  <script src="{{ asset('topbar.js') }}"></script>
+</body>
+</html>

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <meta name="theme-color" content="#231f20">
   <title>Campaign Photo Portal</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
 </head>
 <body>
   {#- What the start form shows on a re-render (validation error, kit_choice banner): the values the user
@@ -150,6 +150,8 @@
 
       <button type="submit">Start Uploading</button>
     </form>
+
+    <a href="/contributions" class="btn secondary full contrib-link">🕘 {{ 'All' if current_user.role == 'admin' else 'My' }} Contributions (last {{ contribution_days }} days)</a>
 
     {% if open_kits or open_sessions %}
     <div class="active-sessions">
@@ -581,6 +583,6 @@
 
     togglePhotoType();
   </script>
-  <script src="/static/topbar.js"></script>
+  <script src="{{ asset('topbar.js') }}"></script>
 </body>
 </html>

@@ -8,6 +8,7 @@
     {% if current_user.role == 'admin' %}
     <a href="/admin" class="user-menu-item">Admin</a>
     {% endif %}
+    <a href="/contributions" class="user-menu-item">{{ 'All' if current_user.role == 'admin' else 'My' }} Contributions</a>
     <a href="/change-pin" class="user-menu-item">Change PIN</a>
     <form method="post" action="/logout" class="inline-form">
       <button type="submit" class="user-menu-item user-menu-item-btn">Log out</button>

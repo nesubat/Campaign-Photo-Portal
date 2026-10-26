@@ -286,6 +286,8 @@ def _migrate(conn):
     # lives here rather than in init_db's CREATE script.
     _add_column_if_missing(conn, "uploads", "pack_id", "pack_id INTEGER")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_pack ON uploads(pack_id)")
+    # My Contributions (contributions_since): one person's recent photos.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_employee_time ON uploads(employee_name, uploaded_at)")
     # Pack labels (labels.py): when a pack's label was last printed, by whom,
     # and how many times - shown on its card, so nobody prints a box twice
     # without meaning to. kit_packs may already exist from before labels.
@@ -1101,6 +1103,112 @@ def recent_job_numbers(limit=300):
         (limit,),
     ).fetchall()
     return [row["jn"] for row in rows]
+
+
+# --- My Contributions -------------------------------------------------------
+#
+# What was added in the last few days (config.CONTRIBUTION_HISTORY_DAYS), one
+# card per JOB NUMBER covering every kind of photo on it - Packing, Dispatch
+# and its New Store Kits. A standard user sees the jobs they added to; an
+# admin sees everyone's (employee_name=None below). A job is matched by both
+# spellings of its number - /start upper-cases it, but a row from before that
+# may say "j456789". On disk those were always the same folder
+# (uploads/<job>/<category>, and Windows paths ignore case); matching both
+# here merges them on screen as well, whoever started which session. A kit
+# counts under the job it belongs to NOW (moving a kit to another job moves
+# its photos' rows too - see edit_kit).
+
+def job_number_spellings(job_number):
+    """(J456789, j456789) - the two ways a job's rows can be stored."""
+    upper = job_number.upper()
+    return upper, upper[:1].lower() + upper[1:]
+
+
+def _activity_since_sql(by_person):
+    """Every contribution since a cutoff, as (job_number, at, who): a photo of
+    any kind, an item typed into a kit's pack, starting a kit. Parameters:
+    the cutoff, plus the person after it when by_person (each of 3 parts)."""
+    who = " AND {col} = ?" if by_person else ""
+    return f"""
+        SELECT UPPER(job_number) AS job_number, uploaded_at AS at, employee_name AS who
+          FROM uploads WHERE uploaded_at >= ?{who.format(col="employee_name")}
+        UNION ALL
+        SELECT UPPER(k.job_number), i.added_at, i.added_by
+          FROM kit_pack_items i JOIN kits k ON k.session_id = i.session_id
+         WHERE i.added_at >= ?{who.format(col="i.added_by")}
+        UNION ALL
+        SELECT UPPER(job_number), created_at, created_by
+          FROM kits WHERE created_at >= ?{who.format(col="created_by")}"""
+
+
+def contributed_jobs_since(since_iso, employee_name=None):
+    """Job numbers with contributions since `since_iso` - this person's, or
+    everyone's when employee_name is None (the admin view) - each with the
+    latest such moment (last_at), newest first."""
+    params = [since_iso, employee_name] * 3 if employee_name is not None else [since_iso] * 3
+    conn = get_conn()
+    return conn.execute(
+        f"""SELECT job_number, MAX(at) AS last_at FROM ({_activity_since_sql(employee_name is not None)})
+            GROUP BY job_number ORDER BY last_at DESC""",
+        params,
+    ).fetchall()
+
+
+def job_contributors_since(job_number, since_iso):
+    """Everyone who added anything to this job since `since_iso` - photos of
+    any kind, kit items, a kit started - in the order they first did."""
+    conn = get_conn()
+    return [
+        row["who"] for row in conn.execute(
+            f"""SELECT who, MIN(at) AS first_at FROM ({_activity_since_sql(False)})
+                WHERE job_number = ? GROUP BY who ORDER BY first_at ASC""",
+            (since_iso, since_iso, since_iso, job_number.upper()),
+        ).fetchall()
+    ]
+
+
+def job_photo_counts_since(job_number, since_iso):
+    """{category: photo count} for this job since `since_iso`, everyone's."""
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT category, COUNT(*) AS n FROM uploads
+           WHERE job_number IN (?, ?) AND uploaded_at >= ?
+           GROUP BY category""",
+        (*job_number_spellings(job_number), since_iso),
+    ).fetchall()
+    return {row["category"]: row["n"] for row in rows}
+
+
+def job_kits_since(job_number, since_iso):
+    """This job's New Store Kits that anyone worked on since `since_iso`
+    (started, a photo, an item), oldest first."""
+    conn = get_conn()
+    return conn.execute(
+        _KIT_SELECT + """
+           WHERE k.job_number IN (?, ?)
+             AND (k.created_at >= ?
+                  OR EXISTS (SELECT 1 FROM uploads u WHERE u.session_id = k.session_id AND u.uploaded_at >= ?)
+                  OR EXISTS (SELECT 1 FROM kit_pack_items i WHERE i.session_id = k.session_id AND i.added_at >= ?))
+           ORDER BY s.started_at ASC, k.rowid ASC""",
+        (*job_number_spellings(job_number), since_iso, since_iso, since_iso),
+    ).fetchall()
+
+
+def job_uploads_since(job_number, since_iso):
+    """Everyone's photos of this job since `since_iso` - every kind, kit
+    photos with their kit and pack - newest first (the job's read-only page)."""
+    conn = get_conn()
+    return conn.execute(
+        """SELECT u.*, c.key_value AS consignment_value,
+                  p.pack_number AS pack_number, k.kit_name AS kit_name
+           FROM uploads u
+           LEFT JOIN consignments c ON c.id = u.consignment_id
+           LEFT JOIN kit_packs p ON p.id = u.pack_id
+           LEFT JOIN kits k ON k.session_id = u.session_id
+           WHERE u.job_number IN (?, ?) AND u.uploaded_at >= ?
+           ORDER BY u.uploaded_at DESC, u.id DESC""",
+        (*job_number_spellings(job_number), since_iso),
+    ).fetchall()
 
 
 # --- New Store Kits ---------------------------------------------------------

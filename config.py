@@ -153,8 +153,14 @@ CONSIGNMENT_LOGGING_CATEGORY = "packing"
 SESSION_RESUME_WINDOW_HOURS = 24
 
 # How many days after a photo is confirmed synced to Drive before its local copy
-# (full-res + thumbnail) is deleted to free disk space.
-LOCAL_CLEANUP_AFTER_DAYS = 2
+# (full-res + thumbnail) is deleted to free disk space. Kept at least as long as
+# CONTRIBUTION_HISTORY_DAYS, so every photo My Contributions lists still opens
+# from this machine instead of as an "In Drive" tile.
+LOCAL_CLEANUP_AFTER_DAYS = 7
+
+# How far back (days) the My Contributions page looks - the jobs and New Store
+# Kits the logged-in person added photos (or kit items) to in that window.
+CONTRIBUTION_HISTORY_DAYS = 7
 
 # How often (seconds) the background worker checks for synced photos old enough to clean up.
 LOCAL_CLEANUP_INTERVAL_SEC = 3600

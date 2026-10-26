@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#231f20">
   <title>{{ kit['kit_name'] }} - {{ session['job_number'] }} - Pack labels</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
   <style>
     /* Screen only: the labels sit on a grey desk at their real size (mm), one
        under the other; a label wider than a phone scrolls inside its frame
@@ -94,7 +94,7 @@
   <p class="labels-empty no-print">Nothing to print - the selected packs are empty.</p>
   {% endif %}
 
-  <script src="/static/topbar.js"></script>
+  <script src="{{ asset('topbar.js') }}"></script>
   <script>
     (function () {
       var btn = document.getElementById('printPageBtn');

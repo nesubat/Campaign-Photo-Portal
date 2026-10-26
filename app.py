@@ -11,6 +11,7 @@ Flow:
   5. POST /api/finalize     -> marks the session's photos as finalized (the "Submit" button);
                                only finalized photos are picked up for background Drive sync
   6. GET  /gallery/<job>    -> read-only view of everything uploaded for a job (for supervisors)
+     GET  /contributions    -> My Contributions: the jobs / kits this person added to lately
   7. GET  /admin            -> admin-only: create/manage user accounts, reset PINs
 
 New Store Kits (config.NEW_STORE_KITS_CATEGORY) take a different path from
@@ -27,11 +28,12 @@ Run for real use (all-day, several phones):  py serve.py   <- use this one day-t
 Both bind 0.0.0.0:5000 so phones on the hotspot/LAN can reach it.
 """
 import io
+import os
 import re
 import sqlite3
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from flask import (
@@ -50,6 +52,7 @@ import local_cleanup
 from config import (
     CATEGORIES,
     CONSIGNMENT_LOGGING_CATEGORY,
+    CONTRIBUTION_HISTORY_DAYS,
     HOST,
     KIT_NAME_MAX_LEN,
     KIT_POLL_INTERVAL_SEC,
@@ -119,6 +122,42 @@ def _format_started_at(iso_str):
 app.jinja_env.filters["started_at"] = _format_started_at
 
 
+def _format_ago(iso_str):
+    """How long ago a stored timestamp was - "just now", "12 min ago",
+    "3 h ago", "Yesterday", "4 days ago" - for lists people scan rather
+    than read (the exact time goes in a tooltip)."""
+    if not iso_str:
+        return ""
+    then = datetime.fromisoformat(iso_str)
+    seconds = (datetime.now(timezone.utc) - then).total_seconds()
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} min ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)} h ago"
+    days = (datetime.now().astimezone().date() - then.astimezone().date()).days
+    return "Yesterday" if days <= 1 else f"{days} days ago"
+
+
+app.jinja_env.filters["ago"] = _format_ago
+
+
+def _asset_url(filename):
+    """/static/<file>?v=<last modified>. Phones keep a cached style.css or
+    script until its URL changes, so after an update they would draw the new
+    pages with the old styles (a page of bare blue links); the version
+    changes whenever the file does."""
+    try:
+        version = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
+    except OSError:
+        version = 0
+    return f"/static/{filename}?v={version}"
+
+
+app.jinja_env.globals["asset"] = _asset_url
+
+
 def sanitize_for_filename(raw: str) -> str:
     cleaned = _SAFE_CHARS.sub("_", raw.strip())
     cleaned = cleaned.strip(". ")  # no leading/trailing dots or spaces (Windows folder rules)
@@ -169,6 +208,7 @@ def _render_index(**extra):
             for k in db.list_kit_names()
         ],
         recent_job_numbers=db.recent_job_numbers(),
+        contribution_days=CONTRIBUTION_HISTORY_DAYS,
         **extra
     )
 
@@ -2016,6 +2056,119 @@ def gallery(job_number):
     )
 
 
+# --- My Contributions ----------------------------------------------------------
+#
+# What was added in the last CONTRIBUTION_HISTORY_DAYS days: ONE card per job
+# number, covering every kind of photo on it - Packing, Dispatch and each of
+# its New Store Kits (with the kit's "Packed so far" report) - with everyone
+# who added to it. A standard user sees the jobs they added to, most recent
+# of their own contributions first; an admin sees every job anyone added to,
+# most recent first. The card opens the job's read-only photo page; a kit
+# inside it opens the kit page itself - the one kind of contribution that can
+# still be changed.
+
+def _history_cutoff():
+    """Start of the My Contributions window, in the stored timestamp format
+    (db.now_iso), so it compares as text like find_open_session's cutoff."""
+    return (
+        datetime.now(timezone.utc).astimezone() - timedelta(days=CONTRIBUTION_HISTORY_DAYS)
+    ).isoformat(timespec="seconds")
+
+
+def _kit_summary(kit):
+    """A kit as its job's card and page show it: the same "Packed so far"
+    report as the kit page (saved packs only, with the still-open ones
+    named), its status, packs, photos and collaborators."""
+    session_id = kit["session_id"]
+    packs = db.packs_for_kit(session_id)
+    saved = {p["id"] for p in packs if p["reserved_by"] is None}
+    saved_items = [it for it in db.items_for_kit(session_id) if it["pack_id"] in saved]
+    return {
+        "session_id": session_id,
+        "kit_name": kit["kit_name"],
+        "submitted": bool(kit["finalized_at"]),
+        "reopened": bool(kit["reopen_count"]) and not kit["finalized_at"],
+        "pack_count": len(packs),
+        "photo_count": len(db.uploads_for_session(session_id)),
+        "contributors": db.merge_collaborators(
+            kit["created_by"], packs, db.general_photo_uploaders(session_id)
+        ),
+        "report": [
+            {"text": r["text"], "complete": r["complete"]}
+            for r in kits.series_report(saved_items, full=False)
+        ],
+        "open_packs": [
+            {"number": p["pack_number"], "by": p["reserved_by"]} for p in packs if p["reserved_by"]
+        ],
+        "url": f"/session/{session_id}",
+    }
+
+
+def _job_contribution_card(job_number, last_at, since):
+    counts = db.job_photo_counts_since(job_number, since)
+    return {
+        "job_number": job_number,
+        "photo_count": sum(counts.values()),
+        "category_counts": [(label, counts[key]) for key, label in CATEGORIES.items() if key in counts],
+        # Packing / Dispatch photos only - a kit's own photos are counted on the kit.
+        "photo_links": [
+            {"key": key, "label": label, "count": counts[key]}
+            for key, label in CATEGORIES.items() if key in counts and key != NEW_STORE_KITS_CATEGORY
+        ],
+        "contributors": db.job_contributors_since(job_number, since),
+        "kits": [_kit_summary(k) for k in db.job_kits_since(job_number, since)],
+        "last_at": last_at,
+        "url": f"/contributions/{job_number}",
+    }
+
+
+@app.route("/contributions")
+@auth.login_required
+def contributions():
+    since = _history_cutoff()
+    everyone = g.user["role"] == "admin"
+    rows = db.contributed_jobs_since(since, None if everyone else g.user["name"])
+    cards = [_job_contribution_card(row["job_number"], row["last_at"], since) for row in rows]
+    # By real time, not as text: two timestamps either side of the daylight
+    # saving change carry different UTC offsets.
+    cards.sort(key=lambda c: datetime.fromisoformat(c["last_at"]), reverse=True)
+    return render_template(
+        "contributions.html", cards=cards, days=CONTRIBUTION_HISTORY_DAYS, everyone=everyone
+    )
+
+
+@app.route("/contributions/<job_number>")
+@auth.login_required
+def contribution_job(job_number):
+    """Everything added to one job in the window, everyone's, newest first -
+    Packing, Dispatch, then each New Store Kit (its report, its photos and a
+    way into the kit page). Read only: a submitted batch can't be changed, an
+    open one is changed from its own session page, a kit from the kit page."""
+    job_number = sanitize_for_filename(job_number).upper()
+    if not JOB_NUMBER_RE.match(job_number):
+        abort(404)
+    since = _history_cutoff()
+    photos = db.job_uploads_since(job_number, since)
+    sections = [
+        {"key": key, "label": label, "photos": [p for p in photos if p["category"] == key]}
+        for key, label in CATEGORIES.items() if key != NEW_STORE_KITS_CATEGORY
+    ]
+    job_kits = []
+    for k in db.job_kits_since(job_number, since):
+        summary = _kit_summary(k)
+        summary["photos"] = [p for p in photos if p["session_id"] == k["session_id"]]
+        job_kits.append(summary)
+    return render_template(
+        "contribution_job.html",
+        job_number=job_number,
+        sections=sections,
+        job_kits=job_kits,
+        photo_count=len(photos),
+        contributors=db.job_contributors_since(job_number, since),
+        days=CONTRIBUTION_HISTORY_DAYS,
+    )
+
+
 def _drive_view_url(drive_file_id):
     return f"https://drive.google.com/file/d/{drive_file_id}/view"
 
@@ -2046,10 +2199,14 @@ def media_thumb(job_number, category, filename):
 
 @app.route("/media/<job_number>/<category>/<filename>")
 def media_full(job_number, category, filename):
+    """?download=1 sends the photo as a file download (the photo viewer's
+    Download button) rather than for display."""
     if category not in CATEGORIES:
         abort(404)
     try:
-        return send_from_directory(job_dir(job_number, category), filename)
+        return send_from_directory(
+            job_dir(job_number, category), filename, as_attachment=request.args.get("download") == "1"
+        )
     except (FileNotFoundError, NotFound):  # see media_thumb
         row = db.get_upload_by_filename(job_number, category, filename)
         if row and row["drive_file_id"]:

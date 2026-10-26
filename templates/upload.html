@@ -9,7 +9,7 @@
   {% else %}
   <title>{{ session['job_number'] }} - Photo Upload</title>
   {% endif %}
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
 </head>
 <body>
   <header class="topbar">
@@ -430,11 +430,12 @@
       }
     })();
   </script>
+  <script src="{{ asset('viewer.js') }}"></script>
   {% if kit_mode %}
-  <script src="/static/kit.js"></script>
+  <script src="{{ asset('kit.js') }}"></script>
   {% else %}
-  <script src="/static/upload.js"></script>
+  <script src="{{ asset('upload.js') }}"></script>
   {% endif %}
-  <script src="/static/topbar.js"></script>
+  <script src="{{ asset('topbar.js') }}"></script>
 </body>
 </html>

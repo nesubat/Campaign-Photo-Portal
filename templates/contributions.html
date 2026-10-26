@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#231f20">
+  <title>{{ 'All' if everyone else 'My' }} Contributions</title>
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
+</head>
+<body class="cl-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="home-link" title="Back to main page">🏠</a>
+      <div>
+        <div class="job">{{ 'All' if everyone else 'My' }} Contributions</div>
+        <div class="who-sub">{{ 'Everyone · ' if everyone }}Last {{ days }} days</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      {% include "_user_menu.html" %}
+    </div>
+  </header>
+
+  {#- One row per job number, most recent first, read like an inbox: what it is on the left, how long ago on
+      the right, one quiet line of facts, and the one thing worth colour - a kit's "Packed so far" (red: numbers
+      missing, green: complete). A job with a New Store Kit IS that kit's row (tap it to open the kit), with its
+      Packing / Dispatch photos as links at the end; a job with no kit opens its photo page. A standard user sees
+      the jobs they added to (ordered by their own latest contribution); an admin sees every job. -#}
+  {% macro chevron() -%}
+  <svg class="cl-chev" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  {%- endmacro %}
+
+  {% macro kit_state(k) -%}
+  {% if k['submitted'] %}<span class="cl-state is-done">Submitted</span>
+  {%- elif k['reopened'] %}<span class="cl-state is-warn">Reopened</span>
+  {%- else %}<span class="cl-state">Open</span>{% endif %}
+  {%- endmacro %}
+
+  {% macro report(k) -%}
+  <div class="cl-report">
+    {% for r in k['report'] %}
+    <div class="cl-report-line {{ 'is-done' if r['complete'] else 'is-missing' }}">{{ r['text'] }}</div>
+    {% else %}
+    <div class="cl-report-none">No item numbers packed yet</div>
+    {% endfor %}
+    {% if k['open_packs'] %}
+    <div class="cl-report-none">Still open, not counted:
+      {%- for p in k['open_packs'] %} Pack {{ p['number'] }} ({{ p['by'] }}){{ ',' if not loop.last }}{% endfor %}</div>
+    {% endif %}
+  </div>
+  {%- endmacro %}
+
+  {% macro when(c) -%}
+  <time class="cl-when" datetime="{{ c['last_at'] }}" title="{{ 'Last contribution' if everyone else 'Your last contribution' }}: {{ c['last_at']|started_at }}">{{ c['last_at']|ago }}</time>
+  {%- endmacro %}
+
+  <main>
+    <ul class="cl-list">
+      {% for c in cards %}
+      {% set kits_on = c['kits'] %}
+      <li class="cl-row">
+        {% if kits_on|length == 1 %}
+        {% set k = kits_on[0] %}
+        <a href="{{ k['url'] }}" class="cl-main">
+          <div class="cl-top">
+            <span class="cl-title">{{ k['kit_name'] }}</span>
+            {{ when(c) }}
+          </div>
+          <div class="cl-meta">{{ c['job_number'] }} · New Store Kit · {{ kit_state(k) }} · {{ k['pack_count'] }} pack{{ 's' if k['pack_count'] != 1 }}</div>
+          {{ report(k) }}
+          {% if c['contributors'] %}<div class="cl-people">{{ c['contributors']|join(', ') }}</div>{% endif %}
+        </a>
+        {% else %}
+        <a href="{{ c['url'] }}" class="cl-main">
+          <div class="cl-top">
+            <span class="cl-title">{{ c['job_number'] }}</span>
+            {{ when(c) }}
+          </div>
+          {% if not kits_on %}
+          <div class="cl-meta">
+            {%- for label, n in c['category_counts'] %}{{ label[:1] ~ label[1:]|lower }} {{ n }}{{ ' · ' if not loop.last }}{% endfor -%}
+          </div>
+          {% endif %}
+          {% if c['contributors'] %}<div class="cl-people">{{ c['contributors']|join(', ') }}</div>{% endif %}
+        </a>
+        {% for k in kits_on %}
+        <a href="{{ k['url'] }}" class="cl-kit">
+          <div class="cl-top">
+            <span class="cl-kit-name">{{ k['kit_name'] }}</span>
+            <span class="cl-kit-go">Open kit{{ chevron() }}</span>
+          </div>
+          <div class="cl-meta">New Store Kit · {{ kit_state(k) }} · {{ k['pack_count'] }} pack{{ 's' if k['pack_count'] != 1 }}</div>
+          {{ report(k) }}
+        </a>
+        {% endfor %}
+        {% endif %}
+        {% if kits_on and c['photo_links'] %}
+        <div class="cl-links">
+          {% for l in c['photo_links'] %}
+          <a href="{{ c['url'] }}#{{ l['key'] }}" class="cl-link">{{ l['label'][:1] ~ l['label'][1:]|lower }} <span class="cl-link-n">{{ l['count'] }}</span>{{ chevron() }}</a>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </li>
+      {% else %}
+      <li class="cl-empty">
+        <p class="cl-empty-title">Nothing in the last {{ days }} days</p>
+        <p>{{ 'Jobs anyone takes' if everyone else 'Jobs you take' }} photos for, or work a New Store Kit on, show up here for {{ days }} days.</p>
+      </li>
+      {% endfor %}
+    </ul>
+  </main>
+  <script src="{{ asset('topbar.js') }}"></script>
+</body>
+</html>

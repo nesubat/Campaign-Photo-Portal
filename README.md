@@ -184,9 +184,17 @@ script.google.com > **Executions**.
 
 **Local cleanup**: once a photo is confirmed synced to Drive, its local
 copy (full-res + thumbnail) is automatically deleted after
-`LOCAL_CLEANUP_AFTER_DAYS` (default 2 days, set in `config.py`) to keep disk
+`LOCAL_CLEANUP_AFTER_DAYS` (default 7 days, set in `config.py`) to keep disk
 usage down. The gallery keeps a "View on Drive" link for anything cleaned up
 locally - nothing is ever deleted before Drive confirms it has the photo.
+
+**My Contributions** (start page button, or the name menu): one row per job number
+added to in the last `CONTRIBUTION_HISTORY_DAYS` (7) days, most recent first. A job
+with a New Store Kit shows as that kit - its state and "Packed so far" - and opens the
+kit page, with "Packing photos" / "Dispatch photos" links at the end; any other job
+opens a view-only page of its photos. Staff see the jobs they added to; admins see
+every job (**All Contributions**). Tapping any photo in the portal opens it
+full screen on the same page, with a Download button.
 
 ## 6. Running unattended
 
@@ -212,9 +220,10 @@ in order of effort:
 - **Drive storage**: mirrors to whatever Google account owns the Apps
   Script deployment. A busy day (~700 photos) is ~3.5 GB, ~100 GB a month -
   check that account's storage plan.
-- **Keep the PC on and keep 50 GB free**: local copies are deleted 2 days after
+- **Keep the PC on and keep 75 GB free**: local copies are deleted 7 days after
   they reach Drive, at most 50 photos an hour, so a PC that is switched off at
-  night slowly fills its disk. Normal use needs ~7-10 GB; a week of Drive outage ~25 GB.
+  night slowly fills its disk. Normal use needs up to ~25 GB (a week of busy days);
+  a week of Drive outage on top of that ~50 GB.
 - **Don't open `data/portal.db` in another program while the portal runs**, and
   back it up with the portal stopped.
 
