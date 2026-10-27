@@ -11,9 +11,13 @@
   {% endif %}
   <link rel="stylesheet" href="{{ asset('style.css') }}">
 </head>
-<body{% if previous_photos %} class="has-previous"{% endif %}>
+<body{% if previous_groups %} class="has-previous"{% endif %}>
 {% from '_photo_tiles.html' import photo_tile %}
-  <header class="topbar">
+  {#- A kit that was ever submitted can't be deleted at all (its photos are in Drive) - the server says so
+      through can_delete and the state's canDelete; either one being false hides Delete. -#}
+  {% set show_delete = not finalized and can_delete|default(true) %}
+  {% if kit_mode and kit_state['canDelete'] is defined and not kit_state['canDelete'] %}{% set show_delete = false %}{% endif %}
+  <header class="topbar{{ ' kit-topbar' if kit_mode }}">
     <div class="topbar-left">
       <a href="/" class="home-link"{% if kit_mode %} id="homeLink"{% endif %} title="Back to main page">🏠</a>
       <div>
@@ -22,16 +26,12 @@
           {% if not finalized and not kit_mode %}
           <button type="button" class="job-edit-btn" id="jobEditBtn" title="Edit job number">✏️</button>
           {% endif %}
-          {#- A kit's ✏️ sits next to the job number (a long kit name can't push it around) and opens ONE pane for
-              both the job number and the kit name. Only for an OPEN kit - a submitted one is reopened first; its
-              Drive files follow on the next Final Submit. kit.js keeps it in step with every poll. -#}
-          {% if kit_mode and not finalized %}
-          <button type="button" class="job-edit-btn kit-rename-btn" id="kitRenameBtn"
-                  title="Edit job number / kit name" aria-label="Edit the job number and kit name">✏️</button>
-          {% endif %}
         </div>
         {% if kit_mode %}
-        <div class="who-sub kit-name-line">{{ category_label }} · <span id="kitNameDisplay">{{ kit['kit_name'] }}</span></div>
+        {#- The kit's name and photo count share the line under the job number, so the bar itself only has to
+            hold 🏠, the title, the Kit options button and the user menu (it used to squeeze in a pencil, the
+            count and a bin too, and on a 412px phone the pencil ended up under its neighbours' tap areas). -#}
+        <div class="who-sub kit-name-line"><span id="kitNameDisplay">{{ kit['kit_name'] }}</span> · <span id="counter">{{ kit_state['photoCount'] }} photo(s)</span></div>
         {% else %}
         <div class="who-sub">{{ category_label }}</div>
         {% endif %}
@@ -39,21 +39,31 @@
     </div>
     <div class="topbar-right">
       {% if kit_mode %}
-      <div id="counter" class="counter">{{ kit_state['photoCount'] }} photo(s)</div>
+      {#- Kit options: the kit's own actions, each a full-size row - edit the job number / kit name (open kits),
+          print a test label to check the name, delete (creator / admin, never-submitted kits). Same dropdown as
+          the user menu (topbar.js opens and closes both); kit.js keeps the ids it always used. -#}
+      <div class="user-menu kit-menu">
+        <button type="button" class="user-menu-trigger kit-menu-trigger" aria-haspopup="true" aria-expanded="false"
+                aria-label="Kit options" title="Kit options">
+          <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><circle cx="4" cy="10" r="1.9" fill="currentColor"/><circle cx="10" cy="10" r="1.9" fill="currentColor"/><circle cx="16" cy="10" r="1.9" fill="currentColor"/></svg>
+        </button>
+        <div class="user-menu-dropdown kit-menu-dropdown hidden">
+          <div class="kit-menu-head">New Store Kit</div>
+          {% if not finalized %}
+          <button type="button" class="user-menu-item" id="kitRenameBtn">✏️&nbsp; Edit job number / kit name</button>
+          {% endif %}
+          <button type="button" class="user-menu-item" id="kitTestPrintBtn">🖨&nbsp; Print test label</button>
+          {% if show_delete %}
+          <form method="post" action="/session/{{ session['id'] }}/delete" class="inline-form" id="kitDeleteForm"
+                onsubmit="return confirm('Delete this whole New Store Kit for EVERYONE - all its packs, items and photos? This cannot be undone.');">
+            <button type="submit" class="user-menu-item user-menu-item-btn kit-menu-danger">🗑️&nbsp; Delete kit</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
       {% else %}
       <div id="counter" class="counter">{{ photos|length }} photo(s)</div>
-      {% endif %}
-      {#- A kit that was ever submitted can't be deleted at all (its photos are in Drive) - the server says
-          so through can_delete and the state's canDelete; either one being false hides the button. -#}
-      {% set show_delete = not finalized and can_delete|default(true) %}
-      {% if kit_mode and kit_state['canDelete'] is defined and not kit_state['canDelete'] %}{% set show_delete = false %}{% endif %}
       {% if show_delete %}
-      {% if kit_mode %}
-      <form method="post" action="/session/{{ session['id'] }}/delete" class="inline-form" id="kitDeleteForm"
-            onsubmit="return confirm('Delete this whole New Store Kit for EVERYONE - all its packs, items and photos? This cannot be undone.');">
-        <button type="submit" class="topbar-delete-btn" title="Delete this kit">🗑️</button>
-      </form>
-      {% else %}
       <form method="post" action="/session/{{ session['id'] }}/delete" class="inline-form"
             onsubmit="return confirm('Delete this entire session and all its photos? This cannot be undone.');">
         <button type="submit" class="topbar-delete-btn" title="Delete this session">🗑️</button>
@@ -95,8 +105,9 @@
   {% endif %}
 
   {% if kit_mode and job_sections %}
-  {#- The kit's job's own Packing / Dispatch photos (everyone's, newest first), above "Packed so far" - only
-      the kinds the job has. One sideways-scrolling row each, so they don't push the pack editor far down. -#}
+  {#- Every photo of the kit's job (everyone's, newest first) above "Packed so far": Packing, Dispatch, then
+      New Store Kit photos (pack photos labelled "Pack N - name", the rest just the name) - only the kinds the
+      job has. One sideways-scrolling row each, so they don't push the pack editor far down. -#}
   {% for s in job_sections %}
   <section class="kit-photos kit-job-photos" id="job-{{ s['key'] }}" aria-labelledby="jobPhotos-{{ s['key'] }}">
     <div class="kit-photos-head">
@@ -104,7 +115,7 @@
       <span class="kit-photos-count">{{ s['count'] }} photo{{ 's' if s['count'] != 1 }}</span>
     </div>
     <div class="pack-photo-strip kit-photo-strip">
-      {% for p in s['photos'] %}{{ photo_tile(p, label=false) }}{% endfor %}
+      {% for p in s['photos'] %}{{ photo_tile(p) }}{% endfor %}
     </div>
   </section>
   {% endfor %}
@@ -376,6 +387,11 @@
   <div id="uploadStatus" class="upload-status hidden" role="status" aria-live="polite"></div>
   {% endif %}
 
+  {#- With other photos of this job below, this batch's own get a heading too - always the first section. -#}
+  {% if previous_groups %}
+  <h2 class="contrib-section-heading this-batch-heading">This batch</h2>
+  {% endif %}
+
   {% if consignment_logging %}
   <div id="uploadingStrip" class="uploading-strip"></div>
   <div id="gallery" class="sections"></div>
@@ -403,15 +419,23 @@
   </div>
   {% endif %}
 
-  {#- This person's earlier photos of the same job and photo type, from their other sessions - view only,
-      below this batch's own, so coming back to a job shows what's already there. -#}
-  {% if previous_photos %}
+  {#- Every other photo of this job and photo type - from this person's earlier batches and from everyone
+      else's - one view-only section per person, below this batch's own: the session's own person first,
+      then everyone else, most recently active first. Packing / Dispatch only (a kit is one shared session
+      that already shows everyone's photos). -#}
+  {% if previous_groups %}
   <section class="prev-section" aria-labelledby="prevHeading">
-    <h2 id="prevHeading" class="contrib-section-heading">Previously attached <span class="contrib-section-count">{{ previous_photos|length }}{{ '+' if previous_photos|length >= 200 }}</span></h2>
-    <p class="prev-sub">Your earlier {{ category_label|lower }} for {{ session['job_number'] }} · view only</p>
-    <div class="gallery prev-gallery">
-      {% for p in previous_photos %}{{ photo_tile(p) }}{% endfor %}
+    <h2 id="prevHeading" class="contrib-section-heading">Already attached to {{ session['job_number'] }}</h2>
+    <p class="prev-sub">{{ category_label }} from other batches · view only</p>
+    {% for grp in previous_groups %}
+    <div class="prev-group">
+      <h3 class="prev-group-heading">{{ grp['name'] }}{% if grp['is_owner'] %} <span class="prev-group-you">(earlier batches)</span>{% endif %}
+        <span class="contrib-section-count">{{ grp['count'] }}</span></h3>
+      <div class="gallery prev-gallery">
+        {% for p in grp['photos'] %}{{ photo_tile(p) }}{% endfor %}
+      </div>
     </div>
+    {% endfor %}
   </section>
   {% endif %}
 

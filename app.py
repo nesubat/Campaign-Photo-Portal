@@ -743,11 +743,9 @@ def session_page(session_id):
         kit_poll_ms=_kit_poll_ms(),
         can_delete=True,  # the delete route itself still checks ownership, as before
         reopened_notice=False,
-        # The session owner's earlier photos of this job + photo type (other
-        # sessions), shown view-only under this batch's own.
-        previous_photos=db.previous_uploads(
-            sess["job_number"], sess["category"], sess["employee_name"], sess["id"]
-        ),
+        # Everyone's other photos of this job + photo type, one view-only
+        # section per person under this batch's own.
+        previous_groups=_previous_groups(sess),
         job_sections=[],
     )
 
@@ -778,23 +776,53 @@ def _kit_page(sess):
         # ?reopened=1: just reopened from the start page or the finished
         # kit's own page - the page says what that means for Drive.
         reopened_notice=request.args.get("reopened") == "1",
-        previous_photos=[],
-        # The kit's job's Packing / Dispatch photos (everyone's), shown above
-        # "Packed so far" - only the kinds the job has.
+        previous_groups=[],
+        # Every photo of the kit's job (everyone's) - Packing, Dispatch and New
+        # Store Kit photos - shown above "Packed so far"; only the kinds it has.
         job_sections=_job_photo_sections(kit["job_number"]),
     )
 
 
+def _previous_groups(sess):
+    """The upload page's "Already attached" sections: every OTHER photo of
+    this job + photo type (other batches, anyone's), grouped by who took it -
+    the session's own person first, then everyone else by their latest photo
+    - newest first within each, at most PREVIOUS_PER_PERSON each."""
+    groups = {}
+    for p in db.previous_uploads(sess["job_number"], sess["category"], sess["id"]):
+        groups.setdefault(p["employee_name"], []).append(p)  # rows come newest first
+    owner = sess["employee_name"]
+    names = sorted(groups, key=lambda n: (n != owner, -_sort_ts(groups[n][0]["uploaded_at"])))
+    return [
+        {
+            "name": name, "is_owner": name == owner, "count": len(groups[name]),
+            "photos": groups[name][:PREVIOUS_PER_PERSON],
+        }
+        for name in names
+    ]
+
+
+PREVIOUS_PER_PERSON = 200
+
+
+def _sort_ts(iso_str):
+    return datetime.fromisoformat(iso_str).timestamp()
+
+
 def _job_photo_sections(job_number):
-    """[{key, label, count, photos}] for a job's Packing and Dispatch photos,
-    only those it has (photos capped to the newest 200; count is all)."""
+    """[{key, label, count, photos}] for every photo of a job still on this
+    machine - Packing, Dispatch, then its New Store Kit photos (pack photos
+    and kit photos in no pack) - only the kinds it has (photos capped to the
+    newest 200 each; count is all)."""
     counts = db.job_photo_counts_since(job_number)
     return [
         {
-            "key": key, "label": label, "count": counts[key],
+            "key": key,
+            "label": "New Store Kit Photos" if key == NEW_STORE_KITS_CATEGORY else label,
+            "count": counts[key],
             "photos": db.job_uploads_in_category(job_number, key),
         }
-        for key, label in CATEGORIES.items() if key != NEW_STORE_KITS_CATEGORY and counts.get(key)
+        for key, label in CATEGORIES.items() if counts.get(key)
     ]
 
 
@@ -1525,7 +1553,7 @@ def _kit_state(sess, holding_pack_id=None):
         "series": kits.series_buttons(items),
         "report": [
             {"series": r["series"], "text": r["text"], "complete": r["complete"]}
-            for r in kits.series_report(saved_items, full=False)
+            for r in kits.series_report(saved_items, full=False, include_unnumbered=True)
         ],
         "openPacks": [{"number": w["packNumber"], "by": w["name"]} for w in working],
         "working": working,
@@ -2023,6 +2051,53 @@ def api_kit_labels_print():
     )
 
 
+def _test_label_content(kit):
+    """A test label: the kit name exactly as every pack label will carry it,
+    so whoever typed it can check it on real stock before printing the packs."""
+    return {
+        "header": str(kit["kit_name"]),
+        "subheader": "Test label",
+        "body": [f"Job {kit['job_number']}", "Check the kit name above"],
+    }
+
+
+@app.route("/api/kit/labels/test", methods=["POST"])
+@auth.login_required
+def api_kit_labels_test():
+    """Kit options > Print test label: one label with the kit name as the
+    packs' labels will show it - on the server's label printer, or (no printer
+    configured) as printer_not_configured with a previewUrl, like pack labels.
+    Anyone may, on an open or submitted kit; no pack is marked printed."""
+    data, sess = _kit_request()
+    if sess is None:
+        return _kit_missing()
+    kit = db.get_kit(sess["id"])
+    if kit is None:
+        return _kit_missing()
+    cfg = load_label_config()
+    if not cfg["printerName"]:
+        return _kit_error(
+            sess, "printer_not_configured",
+            "No label printer is set up on the server yet - opening a preview instead.", 409,
+            previewUrl=f"/session/{sess['id']}/labels?test=1",
+        )
+    try:
+        pages = labels.layout(_test_label_content(kit), cfg)
+        job_id = labels.send_raw(
+            labels.to_zpl(pages, cfg).encode("utf-8"), cfg["printerName"],
+            doc_name=f"{kit['kit_name']} - Test label",
+        )
+    except labels.LabelPrintError as exc:
+        return _kit_error(sess, "print_failed", str(exc), 502)
+    except Exception as exc:  # noqa: BLE001 - never a 500 over a printer
+        print(f"[labels] test label for {kit['job_number']} / {kit['kit_name']} failed: {exc!r}")
+        return _kit_error(sess, "print_failed", f"Printing failed: {exc}", 502)
+    return _kit_ok(
+        sess, jobId=job_id, labelCount=len(pages),
+        message=f'Test label printed - check it reads "{kit["kit_name"]}".',
+    )
+
+
 @app.route("/session/<session_id>/labels")
 @auth.login_required
 def labels_preview(session_id):
@@ -2037,8 +2112,11 @@ def labels_preview(session_id):
     kit = db.get_kit(session_id)
     if kit is None:
         abort(404)
+    test_label = request.args.get("test") == "1"  # Kit options > Print test label, no printer
     raw = (request.args.get("packs") or "").strip()
-    if raw:
+    if test_label:
+        pack_ids = []
+    elif raw:
         pack_ids = [int(x) for x in raw.split(",") if re.fullmatch(r"[0-9]+", x.strip())]
     else:
         pack_ids = [p["id"] for p in db.packs_for_kit(session_id)]
@@ -2047,7 +2125,7 @@ def labels_preview(session_id):
     cfg = load_label_config()
     error = None
     try:
-        pages = _label_pages(kit, printable, cfg)
+        pages = labels.layout(_test_label_content(kit), cfg) if test_label else _label_pages(kit, printable, cfg)
     except labels.LabelPrintError as exc:
         pages, error = [], str(exc)
     return render_template(
@@ -2065,6 +2143,7 @@ def labels_preview(session_id):
         label_html=labels.to_html(pages, cfg) if pages else "",
         zpl=labels.to_zpl(pages, cfg) if pages else "",
         error=error,
+        test_label=test_label,
         back_url=f"/session/{session_id}",
     )
 
@@ -2118,7 +2197,7 @@ def _kit_summary(kit):
         ),
         "report": [
             {"text": r["text"], "complete": r["complete"]}
-            for r in kits.series_report(saved_items, full=False)
+            for r in kits.series_report(saved_items, full=False, include_unnumbered=True)
         ],
         "open_packs": [
             {"number": p["pack_number"], "by": p["reserved_by"]} for p in packs if p["reserved_by"]

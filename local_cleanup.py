@@ -1,10 +1,13 @@
 """
 Background worker: deletes the local copy (full-res + thumbnail) of photos
 that have been confirmed synced to Google Drive - AND, for anything tagged
-to a consignment, confirmed logged in that job's Sheet too, see
-db.uploads_ready_for_local_cleanup - for at least LOCAL_CLEANUP_AFTER_DAYS,
-to free disk space on the portal machine - then prunes any job/category/
-thumbs directory that's now empty as a result.
+to a consignment, confirmed logged in that job's Sheet too - once their JOB
+hasn't been changed for LOCAL_CLEANUP_AFTER_DAYS (a photo inherits its job's
+last change, so any new photo, scan or kit edit on a job keeps all of that
+job's photos here for another full period; see
+db.uploads_ready_for_local_cleanup), to free disk space on the portal
+machine - then prunes any job/category/thumbs directory that's now empty as
+a result.
 
 Runs in a daemon thread started from app.py/serve.py. Never touches a photo
 that hasn't synced (to both Drive and the Sheet, where applicable) yet, so a

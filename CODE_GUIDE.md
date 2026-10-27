@@ -88,9 +88,9 @@ The Python app has **zero direct Google API credentials**. Every Drive/Sheets op
 | **Item number** | What's typed into a pack: a **series** (`J` + 6 digits, or any free-text description) plus an optional digits-only **index** (`J456781-02`). Shown grouped per series: `J456781-02, 05, 06, 08 & 09`. |
 | **Reservation** | Only the person holding a pack can change it. Sticky: released by Save Pack, opening/creating another pack, Home/Cancel, browser Back, log out, or the start page's [Release]. After `PACK_IDLE_TAKEOVER_SEC` without a heartbeat, someone else may take it over (with a confirm). Any held pack blocks Final Submit. |
 | **Kit photo** | A photo in a kit that belongs to NO pack (`uploads.pack_id` NULL) — the kit page's "Kit photos" section, no reservation needed. Goes to Drive only: not listed in the Pack Log (`sheet_status` `not_applicable`). |
-| **Report** | "J456789 - Missing numbers: 02, 03, 07 & 08 until 09." (or "J456789 - Packed everything until 09.") per J-series, over SAVED packs only. |
+| **Report** | "J456789 - Missing numbers: 02, 03, 07 & 08 until 09." (or "J456789 - Packed everything until 09.") per J-series, over SAVED packs only. On screen ("Packed so far": kit page, Final Submit, My Contributions) also "J456789 - Packed." / "Window kit - Packed." for a job number added as-is or a free-text item; the Drive Sheet keeps the numbered series only. |
 | **Pack label** | ZPL label printed on the server's Zebra: the kit name exactly as typed / "Pack N" / the pack's item lines. |
-| **My Contributions** | `/contributions`: ONE row per job number added to in the last `CONTRIBUTION_HISTORY_DAYS` (7), most recent first, inbox-style. A job with a New Store Kit is shown AS that kit (name, state, "Packed so far", the job's total photos; tap → the kit page, which also shows the job's Packing / Dispatch photos); a job without one shows its photo counts and opens a view-only photo page (with "+ Packing / Dispatch photos"). A Packing / Dispatch batch shows the person's earlier photos of the job under "Previously attached". A standard user sees the jobs they added to; an admin sees every job (**All Contributions**). See [§3.8](#38-my-contributions-and-the-photo-viewer). |
+| **My Contributions** | `/contributions`: ONE row per job number added to in the last `CONTRIBUTION_HISTORY_DAYS` (7), most recent first, inbox-style. Every row is headed by its job number. A job with a New Store Kit is shown as that kit (name, state, "Packed so far", the job's total photos; tap → the kit page, which also shows the job's Packing / Dispatch photos); a job without one shows its photo counts and opens a view-only photo page (with "+ Packing / Dispatch photos"). A Packing / Dispatch batch shows everyone's other photos of the job and type under "Already attached", one section per person. A standard user sees the jobs they added to; an admin sees every job (**All Contributions**). See [§3.8](#38-my-contributions-and-the-photo-viewer). |
 
 ---
 
@@ -239,7 +239,7 @@ flowchart TD
   and renamed if the kit was renamed (`sheet_kit_name` / `previousKitName`). Because the Apps Script finds a
   Pack Log by name, a renamed kit's OLD name stays reserved for that job (`db.kit_holding_sheet_name`) until
   its next Final Submit has renamed the Sheet; otherwise a new kit with the old name would take the Sheet over.
-- **Changing a kit's job number** (the ✏️ next to the job number opens one pane for job number + kit name;
+- **Changing a kit's job number** (Kit options (⋯ in the topbar) > Edit job number / kit name opens one pane for both;
   `api_kit_rename` with `job_number` → `_kit_change_job`). An OPEN kit only. The photo files move on disk
   first, then `db.edit_kit` moves the kit, its session and every upload row in one transaction (files go back
   if it refuses: the new job already has that kit name, or another kit's Sheet still carries it). Drive follows
@@ -265,6 +265,11 @@ flowchart TD
   holds up the Sheet (logged as `[kit-labels]`).
 
 ### 3.6 Printing pack labels
+
+**Test label** (Kit options > Print test label → `POST /api/kit/labels/test`, `app._test_label_content`): one
+label with the kit name exactly as every pack label will carry it, "Test label" and the job number - to check
+the name on real stock before printing the packs. Same printer path as below; no printer → `printer_not_configured`
+with `previewUrl` `/session/<id>/labels?test=1`. Any kit, open or submitted; no pack is marked printed.
 
 `POST /api/kit/labels/print {pack_ids}` → `labels.label_content` (header = the kit name exactly as typed - nothing is appended, so "NSK" or any other
 keyword is part of the name; subheader "Pack N",
@@ -301,7 +306,7 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
   its uploads and its consignments, committed once at the end. A consignment the corrected job already has
   (same Consignment #/Store) is merged into that one — items, contributors and photo count — rather than
   duplicated. Nothing in Drive needs fixing: an unsubmitted batch hasn't synced yet. A kit's job number is
-  changed from the kit page's ✏️ instead (§3.5), so every phone on the kit stays in step.
+  changed from the kit page's Kit options instead (§3.5), so every phone on the kit stays in step.
 
 ### 3.8 My Contributions and the photo viewer
 
@@ -315,10 +320,12 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
   timestamps were too hard to read). Title and how long ago (`ago` filter; the exact time is the tooltip),
   one quiet line of facts, the people, and colour only where it means something: a kit's "Packed so far"
   line in red (numbers missing) or green (complete), its state (Submitted green / Reopened amber).
-  - **Job with one kit** → the row IS the kit (`db.job_kits_since` → `app._kit_summary`) plus the count of
-    EVERY photo on the job, ever (`total_photos`), tap → kit page. The kit page shows that job's Packing /
-    Dispatch photos above "Packed so far" (`app._job_photo_sections`: one sideways strip per kind the job has,
-    newest 200 each, `db.job_uploads_in_category`), so that count is what the page shows.
+  - **Every row is headed by its job number.**
+  - **Job with one kit** → the row is the kit ("New Store Kit: <name> · state · packs", `db.job_kits_since` → `app._kit_summary`) plus the count of
+    EVERY photo on the job still on this PC (`total_photos`), tap → kit page. The kit page shows all of them
+    above "Packed so far" (`app._job_photo_sections`: one sideways strip per kind the job has - Packing,
+    Dispatch, New Store Kit Photos - newest 200 each, `db.job_uploads_in_category`), so that count is what
+    the page shows.
   - **Job with several kits** → titled by the job number with the same total (tap → photo page), one line
     per kit under it (tap → that kit).
   - **Job without a kit** → job number, "Packing photos 2 · Dispatch photos 1", tap → photo page.
@@ -335,19 +342,24 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
   `/contributions/<job>/add` (`contribution_add_photos`): the person's own open batch for that job + type
   (`db.find_open_session`, the same one /start would offer) is resumed, else a new one starts - keeping logs
   when the job's packing already has consignment logs.
-- **"Previously attached" on the upload page.** A Packing / Dispatch batch shows, under its own photos, the
-  same person's earlier photos of the same job and type from their other sessions (`db.previous_uploads`,
-  newest 200, view only - no ×); upload.js never sees them (it only works inside `#gallery`). Tiles shared by
-  every view-only photo grid live in `templates/_photo_tiles.html`.
+- **"Already attached" on the upload page.** A Packing / Dispatch batch shows its own photos first ("This
+  batch"), then every OTHER photo of the same job and type - anyone's, from any other batch
+  (`db.previous_uploads`) - one view-only section per person (`app._previous_groups`: the session's own person
+  first, "(earlier batches)", then everyone else by their latest photo; newest 200 each, no ×). upload.js
+  never sees them (it only works inside `#gallery`). A kit needs none of this: it is one shared session that
+  already shows everyone's photos. Tiles shared by every view-only photo grid live in
+  `templates/_photo_tiles.html`.
 - **Speed.** Each card's queries filter by job number inside every part (`job_contributors_since`), and
   `idx_uploads_uploaded_at` / `idx_kit_pack_items_added_at` / `idx_uploads_employee_time` serve the window
   lookups: on a year of synthetic history (256k photos) the admin list renders in ~20 ms (2 s before).
 - **Versioned static files.** Every template links `{{ asset('style.css') }}` / `{{ asset('kit.js') }}` …
   (`app._asset_url` → `/static/<file>?v=<last modified>`), so a phone fetches a changed stylesheet or script
   instead of drawing new pages with its cached old one (which shows bare, underlined links).
-- **Window vs. local copies.** `LOCAL_CLEANUP_AFTER_DAYS` (7) is kept ≥ `CONTRIBUTION_HISTORY_DAYS` (7), so a
-  photo listed here still has its local copy (cleanup counts from when it reached Drive, never before it was
-  taken). One deleted under the old 2-day rule shows a "View on Drive" tile, as in the gallery.
+- **Only photos still on this PC.** Every list, strip and count here skips a photo `local_cleanup` has removed
+  (`local_deleted_at`) - it lives in Drive only, and these pages don't link out to Drive. With
+  `LOCAL_CLEANUP_AFTER_DAYS` (7) ≥ `CONTRIBUTION_HISTORY_DAYS` (7) that's everything from the last week and
+  more (cleanup counts from the JOB's last change, so an active job keeps even its older photos). Labels (`_photo_tiles.html`): "Pack 3 - Sujan" for a
+  kit pack photo, just the name for everything else; the viewer's caption has the rest.
 - **Photo viewer** (`static/viewer.js`, on every page with photos): a tap on a photo tile opens it full screen
   on the same page - thumbnail first, the full photo once loaded - with **⬇ Download** (`/media/...?download=1`,
   sent as an attachment) and ×. It's a `<dialog>` (`showModal`), so it stacks above the pack / consignment
@@ -369,7 +381,7 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
 | Admin | `GET /admin`, `POST /admin/users` (create), `POST /admin/users/<id>/reset-pin` · `/approve` · `/delete` · `/role` |
 | Start & sessions | `GET /` (start page), `POST /start`, `GET /session/<id>`, `POST /session/<id>/delete` · `/edit-job-number` · `/reopen` · `/release-my-packs` |
 | Packing/Dispatch APIs | `POST /api/consignment/resolve` · `/api/consignment/item` · `/api/consignment/item/decrement`, `POST /api/upload` · `/api/delete` · `/api/finalize` |
-| New Store Kit APIs | `POST /api/kit/state` · `/pack/new` · `/pack/reserve` · `/pack/release` · `/item/add` · `/item/remove` · `/finalize` · `/rename` · `/labels/print`; `GET /session/<id>/labels` (preview). Kit photos use `/api/upload` and `/api/delete` too. |
+| New Store Kit APIs | `POST /api/kit/state` · `/pack/new` · `/pack/reserve` · `/pack/release` · `/item/add` · `/item/remove` · `/finalize` · `/rename` · `/labels/print` · `/labels/test`; `GET /session/<id>/labels` (preview; `?test=1` = the test label). Kit photos use `/api/upload` and `/api/delete` too. |
 | Viewing photos | `GET /gallery/<job>`, `GET /media/<job>/<category>/<file>` (`?download=1` = as a download) and `/media/<job>/<category>/thumbs/<file>` |
 | My Contributions | `GET /contributions`, `GET /contributions/<job>`, `POST /contributions/<job>/add` (§3.8) |
 
@@ -423,7 +435,8 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
 errors worded for users), `item_label`, `join_and` (`"02, 03 & 04"`), `pack_groups` (per-series groups with
 item ids — what the × buttons act on), `pack_lines` (built from `pack_groups`, so screen, Sheet and label
 always agree), `series_buttons` (J-series quick-pick, first-use order), `series_report` (the "Missing numbers: … until N" /
-"Packed everything until N" report; `full=False` for the per-poll page, which never materialises a huge list for a typo like 999999).
+"Packed everything until N" report; `full=False` for the per-poll page, which never materialises a huge list for a typo like 999999;
+`include_unnumbered=True` - every on-screen caller - adds "<item> - Packed." for a job number added as-is or a free-text item).
 
 ### `labels.py` — Zebra pack labels
 
@@ -538,7 +551,7 @@ purposes:
 | `_cleanup_one` | Deletes one upload's full-res file + thumbnail, marks it cleaned in the DB. |
 | `_rmdir_if_empty` | Removes a directory only if `rmdir()` succeeds naturally (i.e. it's genuinely empty) — can never force-delete a file, so a concurrent session's still-in-progress files simply block pruning until they're done. |
 | `_prune_empty_dirs` | Walks `uploads/<job>/<category>/thumbs` bottom-up, removing anything now empty. |
-| `_run_loop` | Every `LOCAL_CLEANUP_INTERVAL_SEC`, cleans everything `db.uploads_ready_for_local_cleanup` returns (synced to Drive **and** Sheet, and old enough), then prunes empty directories. |
+| `_run_loop` | Every `LOCAL_CLEANUP_INTERVAL_SEC`, cleans everything `db.uploads_ready_for_local_cleanup` returns (synced to Drive **and** Sheet, and its JOB unchanged for `LOCAL_CLEANUP_AFTER_DAYS` - a photo inherits its job's last change, so any new photo, scan or kit edit keeps all of the job's photos for another full period), then prunes empty directories. |
 | `start_background_cleanup` / `stop_background_cleanup` | Thread lifecycle. |
 
 ### `serve.py` — production entry point
@@ -651,8 +664,14 @@ Submit handler (`/api/finalize`).
   local copies show an "In Drive" tile. Final Submit is held back (with "Wait for N photo(s)…") while any
   photo on this phone is still uploading or failed, so a kit photo can't be left out of the submission.
 - **Leaving**: 🏠/Cancel release with a keepalive fetch, Back/bfcache with `sendBeacon`.
-- **Edit pane** (✏️ next to the job number): job number + kit name in one form; a job change asks to confirm
-  first; every phone's topbar and tab title follow the state.
+- **Topbar + Kit options.** The bar holds only 🏠, the job number (kit name · photo count under it), the ⋯
+  **Kit options** button and the user menu - it used to also fit a ✏️, the count pill and a 🗑️, and on a 412px
+  phone (Pixel 7) the pencil ended up under its neighbours' tap areas. Kit options is the user menu's dropdown
+  (topbar.js opens/closes both and folds it after a choice), one 44px row each: **Edit job number / kit name**
+  (`#kitRenameBtn`, open kits), **Print test label** (`#kitTestPrintBtn` → `printTestLabel`), **Delete kit**
+  (`#kitDeleteForm`, creator/admin, never-submitted). kit.js keeps the ids it always used.
+- **Edit pane**: job number + kit name in one form; a job change asks to confirm first; every phone's topbar
+  and tab title follow the state.
 
 ### `static/viewer.js` — the photo viewer
 
@@ -830,7 +849,7 @@ The main constants in `config.py` itself (edit, then `autostart.py restart`):
 | `DRIVE_SYNC_INTERVAL_SEC` | `5` | How often the Drive sync loop runs. |
 | `DRIVE_UPLOAD_BATCH_MAX_BYTES` / `_MAX_COUNT` | 20 MB / `20` | One `uploadBatch` call's size limit (whichever comes first). |
 | `DRIVE_SHEET_BATCH_CAP` / `DRIVE_BATCH_TIMEOUT_SEC` | `20` / `240` | Consignments per `logConsignments` call; how long to wait for any batch call. |
-| `LOCAL_CLEANUP_AFTER_DAYS` / `LOCAL_CLEANUP_INTERVAL_SEC` | `7` / `3600` | How long a synced photo is kept locally; how often cleanup runs. |
+| `LOCAL_CLEANUP_AFTER_DAYS` / `LOCAL_CLEANUP_INTERVAL_SEC` | `7` / `3600` | How long a JOB must go unchanged before its (Drive-confirmed) photos' local copies are deleted - every photo inherits its job's last change; how often cleanup runs. |
 | `CONTRIBUTION_HISTORY_DAYS` | `7` | How far back My Contributions looks (keep `LOCAL_CLEANUP_AFTER_DAYS` at least this). |
 | `CATEGORIES` | `packing` / `dispatch` / `new_store_kits` | Photo types: the slug is the local folder and DB value, the label ("Packing Photos" …) is shown in the UI and names the Drive folder (`DRIVE_FOLDER_OVERRIDES` aside). |
 
@@ -980,7 +999,8 @@ the printer were never touched.
   40 Mbit/s takes ~18 min per person; at 10 Mbit/s over an hour. Tell staff to keep the page open.
 - **Server PC.** CPU is not the limit (0.27 CPU-seconds per 12 MP photo). RAM: 8 GB+; a burst of 48 MP photos
   peaked at 1.6 GB, and 108 MP photos can need ~0.9 GB each while their thumbnail is made.
-- **Keep the PC on 24/7.** Local cleanup deletes at most 50 photos/hour (7 days after they reach Drive). Always on:
+- **Keep the PC on 24/7.** Local cleanup deletes at most 50 photos/hour, once their job has gone 7 days without a change
+  (a job worked on for weeks keeps all its photos here until 7 days after its last change). Always on:
   local copies peak ~25 GB (a week of busy days; it was ~7 GB when copies were kept 2 days). On ~11 h/day: cleanup never catches up and the disk grows ~0.6 GB/day indefinitely.
 - **Free disk.** Keep ≥ 75 GB free for `uploads/`. If Drive is down for a week, local copies reach ~50 GB and take
   ~2 weeks to clear afterwards. There is no low-disk warning; a full disk makes uploads fail (the page retries).
@@ -1028,7 +1048,8 @@ re-run on the server PC.
 - *How long until photos are in Drive?* After Submit: minutes for one campaign, ~2–3 h for a heavy day's backlog.
 - *How much disk does the PC need?* Up to ~25 GB in normal use with the PC always on (7 days of photos); keep 75 GB free.
 - *Will it slow down over months?* No measurable slowdown after 4 weeks; the database grows ~100 MB/year.
-- *Can a photo be deleted from the PC before it's in Drive?* No. Only Drive-confirmed photos are cleaned up, 7 days later.
+- *Can a photo be deleted from the PC before it's in Drive?* No. Only Drive-confirmed photos are cleaned up, once their job
+  has gone 7 days without any change.
 
 ---
 

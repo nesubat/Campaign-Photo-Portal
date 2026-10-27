@@ -21,7 +21,7 @@
     </div>
   </header>
 
-  {#- One row per job number, most recent first, read like an inbox: what it is on the left, how long ago on
+  {#- One row per job number - every row headed by its job number - most recent first, read like an inbox: what it is on the left, how long ago on
       the right, one quiet line of facts, and the one thing worth colour - a kit's "Packed so far" (red: numbers
       missing, green: complete). A job with a New Store Kit IS that kit's row - with the count of every photo on
       the job - and opens the kit page, which shows the job's Packing / Dispatch photos above "Packed so far";
@@ -66,10 +66,10 @@
         {% set k = kits_on[0] %}
         <a href="{{ k['url'] }}" class="cl-main">
           <div class="cl-top">
-            <span class="cl-title">{{ k['kit_name'] }}</span>
+            <span class="cl-title">{{ c['job_number'] }}</span>
             {{ when(c) }}
           </div>
-          <div class="cl-meta">{{ c['job_number'] }} · New Store Kit · {{ kit_state(k) }} · {{ k['pack_count'] }} pack{{ 's' if k['pack_count'] != 1 }} · {{ photos(c['total_photos']) }}</div>
+          <div class="cl-meta">New Store Kit: <span class="cl-kit-label">{{ k['kit_name'] }}</span> · {{ kit_state(k) }} · {{ k['pack_count'] }} pack{{ 's' if k['pack_count'] != 1 }} · {{ photos(c['total_photos']) }}</div>
           {{ report(k) }}
           {% if c['contributors'] %}<div class="cl-people">{{ c['contributors']|join(', ') }}</div>{% endif %}
         </a>

@@ -18,6 +18,17 @@
       dropdown.classList.add('hidden');
       trigger.setAttribute('aria-expanded', 'false');
     });
+
+    // A chosen item folds the menu away (the kit page's Kit options act in
+    // place) - after the item has done its job: a form still submits, and the
+    // rename pane keeps the focus it just took.
+    dropdown.addEventListener('click', function (e) {
+      if (!e.target.closest || !e.target.closest('.user-menu-item')) return;
+      setTimeout(function () {
+        dropdown.classList.add('hidden');
+        trigger.setAttribute('aria-expanded', 'false');
+      }, 0);
+    });
   });
 })();
 

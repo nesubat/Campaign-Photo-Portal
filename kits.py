@@ -250,7 +250,7 @@ def series_buttons(items):
     return buttons
 
 
-def series_report(items, full=True):
+def series_report(items, full=True, include_unnumbered=False):
     """The "Packed so far" summary, one entry per job-style series that has
     at least one numeric index, in first-use order:
 
@@ -276,26 +276,49 @@ def series_report(items, full=True):
     every phone's 4-second poll just to print thirty of them. missingCount is
     always the true total.
 
+    include_unnumbered=True (the on-screen "Packed so far" - kit page, Final
+    Submit dialog, My Contributions) also lists, in the same first-use order,
+    everything packed that has no number to count: a job number added as-is
+    ("J456789" with no index) and a free-text item ("Window kit"), each once:
+
+        {"series": "Window kit", "lastNumber": "", "missing": [], "missingCount": 0,
+         "complete": True, "text": "Window kit - Packed."}
+
+    A job number that also has numbered items is covered by its numbered line.
+    drive_sync leaves it off: the Sheet's Summary table is series / last
+    number / missing, which an unnumbered line has none of.
+
     Callers choose which items count: app.py passes only SAVED packs' items
     (the report is "what has been packed"), drive_sync passes everything."""
     numeric = {}
+    display = {}
     order = []
     for it in _in_entry_order(items):
         series = it["series"]
-        if not J_SERIES_RE.match(series):
+        if J_SERIES_RE.match(series):
+            key = series = series.upper()
+        elif include_unnumbered:
+            key = ("text", it["series_norm"])
+        else:
             continue
-        series = series.upper()
-        if series not in numeric:
-            numeric[series] = set()
-            order.append(series)
+        if key not in numeric:
+            numeric[key] = set()
+            display[key] = series
+            order.append(key)
         idx = it["idx"] or ""
-        if _DIGITS_RE.match(idx):
-            numeric[series].add(idx)
+        if isinstance(key, str) and _DIGITS_RE.match(idx):
+            numeric[key].add(idx)
 
     report = []
-    for series in order:
-        indexes = numeric[series]
+    for key in order:
+        series = display[key]
+        indexes = numeric[key]
         if not indexes:
+            if include_unnumbered:
+                report.append({
+                    "series": series, "lastNumber": "", "missing": [], "missingCount": 0,
+                    "complete": True, "text": f"{series} - Packed.",
+                })
             continue
         used = {int(i) for i in indexes}
         last = max(used)

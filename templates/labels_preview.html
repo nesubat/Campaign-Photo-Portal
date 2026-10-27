@@ -54,7 +54,9 @@
   </div>
 
   <p class="labels-info no-print">
-    {% if label_count %}
+    {% if test_label and label_count %}
+    <strong>Test label</strong> - check the kit name reads exactly right before printing the packs · {{ size_text }}
+    {% elif label_count %}
     <strong>{{ label_count }} label{{ '' if label_count == 1 else 's' }}</strong>
     for Pack{{ '' if pack_numbers|length == 1 else 's' }} {{ pack_numbers|join(', ') }}
     · {{ size_text }}

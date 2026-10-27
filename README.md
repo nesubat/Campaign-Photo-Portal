@@ -131,7 +131,9 @@ replaces the old one (the old PDF goes to Drive's trash).
 
 ## 5a. New Store Kits
 
-On the kit page the ✏️ next to the job number edits both the **job number** and the
+On the kit page, **Kit options** (⋯ in the top bar) holds **Edit job number / kit
+name**, **Print test label** (one label with the kit name, to check it before printing
+the packs) and **Delete kit**. Editing changes both the **job number** and the
 **kit name**. Changing the job number moves the kit (and its photos) for everyone on it;
 if the kit was submitted before, its Drive sheet, labels and photos move to the new job's
 folders at the next Final Submit (their links stay the same).
@@ -182,10 +184,11 @@ said. Photo uploads and kit sheets get one quick retry a few seconds later befor
 to the usual retry schedule. For the full story of a failed run, open the script at
 script.google.com > **Executions**.
 
-**Local cleanup**: once a photo is confirmed synced to Drive, its local
-copy (full-res + thumbnail) is automatically deleted after
-`LOCAL_CLEANUP_AFTER_DAYS` (default 7 days, set in `config.py`) to keep disk
-usage down. The gallery keeps a "View on Drive" link for anything cleaned up
+**Local cleanup**: a photo's local copy (full-res + thumbnail) is deleted to keep
+disk usage down once its JOB has gone `LOCAL_CLEANUP_AFTER_DAYS` (default 7 days,
+set in `config.py`) without any change - every photo inherits its job's last change,
+so a new photo, scan or kit edit on a job keeps all of that job's photos here for
+another week, however old they are. Only photos Drive has confirmed are ever deleted. The gallery keeps a "View on Drive" link for anything cleaned up
 locally - nothing is ever deleted before Drive confirms it has the photo.
 
 **My Contributions** (start page button, or the name menu): one row per job number
@@ -193,8 +196,9 @@ added to in the last `CONTRIBUTION_HISTORY_DAYS` (7) days, most recent first. A 
 with a New Store Kit shows as that kit - its state, "Packed so far" and the job's total
 photo count - and opens the kit page, which also shows the job's Packing / Dispatch
 photos; any other job opens a view-only page of its photos, with "+ Packing photos" /
-"+ Dispatch photos" to add more. Coming back to a job in a Packing / Dispatch batch
-shows your earlier photos of it under "Previously attached". Staff see the jobs they added to; admins see
+"+ Dispatch photos" to add more. A Packing / Dispatch batch shows its own photos first,
+then everyone else's photos of that job and type under "Already attached" - one
+view-only section per person. Staff see the jobs they added to; admins see
 every job (**All Contributions**). Tapping any photo in the portal opens it
 full screen on the same page, with a Download button.
 
@@ -222,10 +226,11 @@ in order of effort:
 - **Drive storage**: mirrors to whatever Google account owns the Apps
   Script deployment. A busy day (~700 photos) is ~3.5 GB, ~100 GB a month -
   check that account's storage plan.
-- **Keep the PC on and keep 75 GB free**: local copies are deleted 7 days after
-  they reach Drive, at most 50 photos an hour, so a PC that is switched off at
-  night slowly fills its disk. Normal use needs up to ~25 GB (a week of busy days);
-  a week of Drive outage on top of that ~50 GB.
+- **Keep the PC on and keep 75 GB free**: local copies are deleted once their job
+  has gone 7 days without a change, at most 50 photos an hour, so a PC that is
+  switched off at night slowly fills its disk. Normal use needs ~25 GB (a week of
+  busy days) plus every photo of jobs still being worked on; a week of Drive
+  outage on top of that ~50 GB.
 - **Don't open `data/portal.db` in another program while the portal runs**, and
   back it up with the portal stopped.
 

@@ -636,21 +636,42 @@ def mark_drive_error(upload_id, error_text, retry_after_iso):
 
 
 def uploads_ready_for_local_cleanup(cutoff_iso, limit=50):
-    """A photo's local copy is only eligible once the photo ITSELF is synced
-    (drive_status) AND, for anything tagged to a consignment, its link has
-    actually landed in that job's Sheet too (sheet_status) - not just synced
-    to Drive with the Sheet update still pending/erroring. 'not_applicable'
-    covers photos with no consignment - nothing to wait for there."""
+    """Photos whose local copy may go: those of jobs nobody has changed since
+    `cutoff_iso` (LOCAL_CLEANUP_AFTER_DAYS ago). A photo inherits its JOB's
+    last change, not its own date - one new photo, scan or kit edit on a job
+    keeps every photo of it on this machine for another full period, however
+    old they are. A change is anything with a time stamped on the job (either
+    spelling of its number): a photo of any kind added, a batch started or
+    submitted, a consignment / Item ID scanned, a kit started, reopened or
+    submitted, a kit pack's items or photos changed.
+
+    And, as always, only once the photo ITSELF is synced (drive_status) AND,
+    for anything tagged to a consignment, its link has actually landed in
+    that job's Sheet too (sheet_status) - not just synced to Drive with the
+    Sheet update still pending/erroring. 'not_applicable' covers photos with
+    no consignment - nothing to wait for there."""
     conn = get_conn()
     return conn.execute(
-        """SELECT * FROM uploads
-           WHERE drive_status = 'synced'
-             AND sheet_status IN ('synced', 'not_applicable')
-             AND local_deleted_at IS NULL
-             AND drive_synced_at IS NOT NULL
-             AND drive_synced_at <= ?
-           ORDER BY id ASC LIMIT ?""",
-        (cutoff_iso, limit),
+        """WITH changed_jobs AS (
+               SELECT UPPER(job_number) AS job FROM uploads WHERE uploaded_at >= :cutoff
+               UNION SELECT UPPER(job_number) FROM sessions
+                      WHERE started_at >= :cutoff OR finalized_at >= :cutoff
+               UNION SELECT UPPER(job_number) FROM consignments WHERE updated_at >= :cutoff
+               UNION SELECT UPPER(job_number) FROM kits
+                      WHERE created_at >= :cutoff OR reopened_at >= :cutoff OR last_submitted_at >= :cutoff
+               UNION SELECT UPPER(k.job_number) FROM kit_pack_items i JOIN kits k ON k.session_id = i.session_id
+                      WHERE i.added_at >= :cutoff
+               UNION SELECT UPPER(k.job_number) FROM kit_packs p JOIN kits k ON k.session_id = p.session_id
+                      WHERE p.last_edit_at >= :cutoff OR p.created_at >= :cutoff
+           )
+           SELECT u.* FROM uploads u
+           WHERE u.drive_status = 'synced'
+             AND u.sheet_status IN ('synced', 'not_applicable')
+             AND u.local_deleted_at IS NULL
+             AND u.drive_synced_at IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM changed_jobs c WHERE c.job = UPPER(u.job_number))
+           ORDER BY u.id ASC LIMIT :limit""",
+        {"cutoff": cutoff_iso, "limit": limit},
     ).fetchall()
 
 
@@ -1119,7 +1140,10 @@ def recent_job_numbers(limit=300):
 # (uploads/<job>/<category>, and Windows paths ignore case); matching both
 # here merges them on screen as well, whoever started which session. A kit
 # counts under the job it belongs to NOW (moving a kit to another job moves
-# its photos' rows too - see edit_kit).
+# its photos' rows too - see edit_kit). Photos are listed and counted only
+# while this machine still has them (local_deleted_at NULL): once
+# local_cleanup has removed one (LOCAL_CLEANUP_AFTER_DAYS after it reached
+# Drive) it lives in Drive only, and these pages don't link out to Drive.
 
 def job_number_spellings(job_number):
     """(J456789, j456789) - the two ways a job's rows can be stored."""
@@ -1183,11 +1207,11 @@ def job_contributors_since(job_number, since_iso):
 
 def job_photo_counts_since(job_number, since_iso=None):
     """{category: photo count} for this job since `since_iso` (None: ever),
-    everyone's."""
+    everyone's, still on this machine."""
     conn = get_conn()
     rows = conn.execute(
         """SELECT category, COUNT(*) AS n FROM uploads
-           WHERE job_number IN (?, ?) AND uploaded_at >= ?
+           WHERE job_number IN (?, ?) AND uploaded_at >= ? AND local_deleted_at IS NULL
            GROUP BY category""",
         (*job_number_spellings(job_number), since_iso or ""),
     ).fetchall()
@@ -1195,31 +1219,36 @@ def job_photo_counts_since(job_number, since_iso=None):
 
 
 def job_uploads_in_category(job_number, category, limit=200):
-    """Everyone's photos of this job in one category, ever, newest first -
-    the Packing / Dispatch strips a kit's page shows for its job."""
+    """Everyone's photos of this job in one category still on this machine,
+    newest first - the Packing / Dispatch / New Store Kit strips a kit's page
+    shows for its job (kit photos carry their pack_number)."""
     conn = get_conn()
     return conn.execute(
-        """SELECT u.*, c.key_value AS consignment_value
-           FROM uploads u LEFT JOIN consignments c ON c.id = u.consignment_id
-           WHERE u.job_number IN (?, ?) AND u.category = ?
+        """SELECT u.*, c.key_value AS consignment_value,
+                  p.pack_number AS pack_number, k.kit_name AS kit_name
+           FROM uploads u
+           LEFT JOIN consignments c ON c.id = u.consignment_id
+           LEFT JOIN kit_packs p ON p.id = u.pack_id
+           LEFT JOIN kits k ON k.session_id = u.session_id
+           WHERE u.job_number IN (?, ?) AND u.category = ? AND u.local_deleted_at IS NULL
            ORDER BY u.uploaded_at DESC, u.id DESC LIMIT ?""",
         (*job_number_spellings(job_number), category, limit),
     ).fetchall()
 
 
-def previous_uploads(job_number, category, employee_name, exclude_session_id, limit=200):
-    """This person's earlier photos of the same job and photo type, from
-    their OTHER sessions (submitted or not), newest first - the upload page's
-    "Previously attached" section, so coming back to a job shows what's
-    already there."""
+def previous_uploads(job_number, category, exclude_session_id, limit=1000):
+    """Everyone's photos of the same job and photo type from OTHER sessions
+    (submitted or not), still on this machine, newest first - the upload
+    page's "Already attached" sections (one per person, view only), so coming
+    back to a job shows what's already there, whoever took it."""
     conn = get_conn()
     return conn.execute(
         """SELECT u.*, c.key_value AS consignment_value
            FROM uploads u LEFT JOIN consignments c ON c.id = u.consignment_id
-           WHERE u.job_number IN (?, ?) AND u.category = ? AND u.employee_name = ?
-             AND u.session_id != ?
+           WHERE u.job_number IN (?, ?) AND u.category = ?
+             AND u.session_id != ? AND u.local_deleted_at IS NULL
            ORDER BY u.uploaded_at DESC, u.id DESC LIMIT ?""",
-        (*job_number_spellings(job_number), category, employee_name, exclude_session_id, limit),
+        (*job_number_spellings(job_number), category, exclude_session_id, limit),
     ).fetchall()
 
 
@@ -1249,7 +1278,7 @@ def job_uploads_since(job_number, since_iso):
            LEFT JOIN consignments c ON c.id = u.consignment_id
            LEFT JOIN kit_packs p ON p.id = u.pack_id
            LEFT JOIN kits k ON k.session_id = u.session_id
-           WHERE u.job_number IN (?, ?) AND u.uploaded_at >= ?
+           WHERE u.job_number IN (?, ?) AND u.uploaded_at >= ? AND u.local_deleted_at IS NULL
            ORDER BY u.uploaded_at DESC, u.id DESC""",
         (*job_number_spellings(job_number), since_iso),
     ).fetchall()

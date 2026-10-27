@@ -152,10 +152,13 @@ CONSIGNMENT_LOGGING_CATEGORY = "packing"
 # starts instead (most likely a genuinely separate batch, e.g. the next day).
 SESSION_RESUME_WINDOW_HOURS = 24
 
-# How many days after a photo is confirmed synced to Drive before its local copy
-# (full-res + thumbnail) is deleted to free disk space. Kept at least as long as
-# CONTRIBUTION_HISTORY_DAYS, so every photo My Contributions lists still opens
-# from this machine instead of as an "In Drive" tile.
+# How many days a JOB must go unchanged before the local copies (full-res +
+# thumbnail) of its photos are deleted to free disk space - only photos already
+# confirmed in Drive (and their Sheet). Every photo inherits its job's last
+# change: a new photo, scan or kit edit on a job restarts the count for ALL of
+# that job's photos, old ones included (see db.uploads_ready_for_local_cleanup).
+# Kept at least as long as CONTRIBUTION_HISTORY_DAYS, so every photo My
+# Contributions lists is still on this machine.
 LOCAL_CLEANUP_AFTER_DAYS = 7
 
 # How far back (days) the My Contributions page looks - the jobs and New Store

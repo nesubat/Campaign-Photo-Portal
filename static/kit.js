@@ -64,6 +64,7 @@
   var LEAVE_RELEASE_WAIT_MS = 1500;
   var RELEASE_URL = '/api/kit/pack/release';
   var PRINT_URL = '/api/kit/labels/print';
+  var TEST_PRINT_URL = '/api/kit/labels/test';
   var JSON_HEADERS = { 'Content-Type': 'application/json' };
   var J_SERIES_RE = /^[Jj]\d{6}$/;
   // Same as the server's kits.J_WITH_INDEX_RE: indexes are digits only.
@@ -144,6 +145,7 @@
   var kitUploadingStrip = byId('kitUploadingStrip');
   var kitNameDisplay = byId('kitNameDisplay');
   var kitRenameBtn = byId('kitRenameBtn');
+  var kitTestPrintBtn = byId('kitTestPrintBtn');
   var kitRenameForm = byId('kitRenameForm');
   var kitRenameInput = byId('kitRenameInput');
   var kitJobInput = byId('kitJobInput');
@@ -743,8 +745,8 @@
     kitRenameInput.value = state.kitName || '';
     if (kitJobInput) kitJobInput.value = state.jobNumber || '';
     kitRenameForm.classList.remove('hidden');
-    // Synchronous, inside the tap - so a phone raises its keyboard. The ✏️
-    // sits next to the job number, so that's where the cursor goes.
+    // Synchronous, inside the tap - so a phone raises its keyboard. The pane
+    // reads job number first, so that's where the cursor goes.
     var first = kitJobInput || kitRenameInput;
     first.focus();
     first.select();
@@ -1168,6 +1170,34 @@
       printing = null;
       syncPrintControls();
       notify(failMessage(err, 'print the labels'), { ms: ERROR_NOTICE_MS });
+    });
+  }
+
+  // Kit options > Print test label: one label carrying the kit name exactly
+  // as the packs' labels will, to check it before printing them. Without a
+  // printer the server answers with a preview of it, like pack labels.
+  function printTestLabel() {
+    if (printing !== null || !state || leaving) return;
+    printing = 'test';
+    syncPrintControls();
+    mutate(TEST_PRINT_URL, {}).then(function (data) {
+      printing = null;
+      if (data.code === 'kit_missing') { kitGone(); return; }
+      if (data.state) apply(data.state);
+      if (data.ok) {
+        notify(data.message || 'Test label printed.');
+      } else if (data.code === 'printer_not_configured') {
+        showNotice('No label printer is set up on the server yet.', {
+          link: { href: data.previewUrl || ('/session/' + encodeURIComponent(SESSION_ID) + '/labels?test=1'), text: 'Open test label' },
+        });
+      } else {
+        notify(data.error || 'Couldn\'t print the test label.', { ms: ERROR_NOTICE_MS });
+      }
+      syncPrintControls();
+    }, function (err) {
+      printing = null;
+      syncPrintControls();
+      notify(failMessage(err, 'print the test label'), { ms: ERROR_NOTICE_MS });
     });
   }
 
@@ -2406,6 +2436,7 @@
   if (addNoIndexBtn) addNoIndexBtn.addEventListener('click', addAsIs);
   if (savePackBtn) savePackBtn.addEventListener('click', onSavePack);
   if (kitRenameBtn) kitRenameBtn.addEventListener('click', openRename);
+  if (kitTestPrintBtn) kitTestPrintBtn.addEventListener('click', printTestLabel);
   if (kitRenameForm) kitRenameForm.addEventListener('submit', submitRename);
   if (kitRenameCancel) kitRenameCancel.addEventListener('click', closeRename);
   [kitRenameInput, kitJobInput].forEach(function (input) {

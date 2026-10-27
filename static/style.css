@@ -472,7 +472,6 @@ html.kit-mode, html.kit-mode body { overscroll-behavior-y: contain; }
 .kit-mode .topbar-left { min-width: 0; }
 .kit-mode .topbar-left > div { min-width: 0; }
 .kit-mode .topbar-right { flex-shrink: 0; }
-.kit-mode .counter { white-space: nowrap; }
 .kit-mode .topbar .who-sub {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   overflow-wrap: anywhere;
@@ -762,14 +761,22 @@ html.kit-mode, html.kit-mode body { overscroll-behavior-y: contain; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
-/* --- Rename a New Store Kit (✏️ next to its name in the topbar) --- */
-.kit-name-line { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
-/* The topbar pencil is small by design; the padding gives it a thumb-sized
-   (44px) hit area without making the icon itself bigger. */
-.kit-rename-btn {
-  font-size: 13px; padding: 14px 12px; margin: -14px -8px -14px -4px;
-  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+/* --- Kit options (⋯ in the kit page's topbar): edit job number / kit name,
+   print a test label, delete - the user menu's dropdown, one full-size row each.
+   The bar keeps only 🏠, the title, this button and the user menu, so nothing in
+   it has to fake a bigger tap area with negative margins any more. --- */
+.kit-menu-trigger {
+  width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; justify-content: center;
 }
+.kit-menu-dropdown { min-width: 250px; }
+.kit-menu-head {
+  padding: 8px 14px 6px; font-size: 12px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.user-menu-item.kit-menu-danger { color: var(--bad); }
+.kit-topbar .topbar-right { gap: 8px; }
+
+/* --- Rename a New Store Kit (Kit options > Edit job number / kit name) --- */
 .kit-rename-form input { font-size: 16px; } /* 16px: iOS doesn't zoom the page on focus */
 .kit-rename-form .btn { min-height: 44px; touch-action: manipulation; }
 /* Job number + kit name: two labelled fields, side by side when there's room
@@ -910,5 +917,20 @@ html.kit-mode, html.kit-mode body { overscroll-behavior-y: contain; }
 .prev-sub { margin: -6px 16px 10px; font-size: 13px; color: var(--text-muted); }
 .prev-gallery { padding-bottom: 0; }
 
-/* Kit page: the job's Packing / Dispatch photos above "Packed so far". */
-.kit-job-photos .kit-photo-strip .thumb { flex: 0 0 72px; width: 72px; height: 72px; }
+/* Kit page: the job's Packing / Dispatch / New Store Kit photos above "Packed so far".
+   One-line name labels ("Pack 3 - Sujan"), cut with an ellipsis rather than wrapped. */
+.kit-job-photos .kit-photo-strip .thumb { flex: 0 0 96px; width: 96px; height: 96px; }
+.kit-job-photos .thumb .tag, .contrib-gallery .thumb .tag, .prev-gallery .thumb .tag {
+  font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cl-kit-label { font-weight: 600; color: var(--ink); }
+
+/* Upload page: "This batch" first, then "Already attached" - one group per person. */
+.this-batch-heading { margin-top: 14px; }
+.prev-group { padding-top: 4px; }
+.prev-group-heading {
+  display: flex; align-items: baseline; gap: 8px; margin: 12px 16px 8px;
+  font-family: 'Jost', 'Work Sans', sans-serif; font-size: 15px; font-weight: 600; overflow-wrap: anywhere;
+}
+.prev-group-you { font-family: 'Work Sans', sans-serif; font-size: 13px; font-weight: 400; color: var(--text-muted); }
+.prev-group + .prev-group { border-top: 1px solid var(--line); margin-top: 8px; }
