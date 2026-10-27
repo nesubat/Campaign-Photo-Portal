@@ -88,7 +88,7 @@ The Python app has **zero direct Google API credentials**. Every Drive/Sheets op
 | **Item number** | What's typed into a pack: a **series** (`J` + 6 digits, or any free-text description) plus an optional digits-only **index** (`J456781-02`). Shown grouped per series: `J456781-02, 05, 06, 08 & 09`. |
 | **Reservation** | Only the person holding a pack can change it. Sticky: released by Save Pack, opening/creating another pack, Home/Cancel, browser Back, log out, or the start page's [Release]. After `PACK_IDLE_TAKEOVER_SEC` without a heartbeat, someone else may take it over (with a confirm). Any held pack blocks Final Submit. |
 | **Kit photo** | A photo in a kit that belongs to NO pack (`uploads.pack_id` NULL) — the kit page's "Kit photos" section, no reservation needed. Goes to Drive only: not listed in the Pack Log (`sheet_status` `not_applicable`). |
-| **Report** | "J456789 - Missing numbers: 02, 03, 07 & 08 until 09." (or "J456789 - Packed everything until 09.") per J-series, over SAVED packs only. On screen ("Packed so far": kit page, Final Submit, My Contributions) also "J456789 - Packed." / "Window kit - Packed." for a job number added as-is or a free-text item; the Drive Sheet keeps the numbered series only. |
+| **Report** | "J456789 - Missing numbers: 02, 03, 07 & 08 until 09." (or "J456789 - Packed everything until 09.") per J-series, over SAVED packs only. On screen ("Packed so far": kit page, Final Submit, My Contributions) also "J456789 - Packed." / "Window kit - Packed." for a job number added as-is or a free-text item - on the Drive Sheet's Summary too ("—" / "Packed (added as-is, no item numbers)", needs the redeployed Apps Script). |
 | **Pack label** | ZPL label printed on the server's Zebra: the kit name exactly as typed / "Pack N" / the pack's item lines. |
 | **My Contributions** | `/contributions`: ONE row per job number added to in the last `CONTRIBUTION_HISTORY_DAYS` (7), most recent first, inbox-style. Every row is headed by its job number. A job with a New Store Kit is shown as that kit (name, state, "Packed so far", the job's total photos; tap → the kit page, which also shows the job's Packing / Dispatch photos); a job without one shows its photo counts and opens a view-only photo page (with "+ Packing / Dispatch photos"). A Packing / Dispatch batch shows everyone's other photos of the job and type under "Already attached", one section per person. A standard user sees the jobs they added to; an admin sees every job (**All Contributions**). See [§3.8](#38-my-contributions-and-the-photo-viewer). |
 
@@ -436,7 +436,7 @@ errors worded for users), `item_label`, `join_and` (`"02, 03 & 04"`), `pack_grou
 item ids — what the × buttons act on), `pack_lines` (built from `pack_groups`, so screen, Sheet and label
 always agree), `series_buttons` (J-series quick-pick, first-use order), `series_report` (the "Missing numbers: … until N" /
 "Packed everything until N" report; `full=False` for the per-poll page, which never materialises a huge list for a typo like 999999;
-`include_unnumbered=True` - every on-screen caller - adds "<item> - Packed." for a job number added as-is or a free-text item).
+`include_unnumbered=True` - every caller, the Sheet included - adds "<item> - Packed." for a job number added as-is or a free-text item).
 
 ### `labels.py` — Zebra pack labels
 

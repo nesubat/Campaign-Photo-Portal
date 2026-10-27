@@ -276,8 +276,8 @@ def series_report(items, full=True, include_unnumbered=False):
     every phone's 4-second poll just to print thirty of them. missingCount is
     always the true total.
 
-    include_unnumbered=True (the on-screen "Packed so far" - kit page, Final
-    Submit dialog, My Contributions) also lists, in the same first-use order,
+    include_unnumbered=True (the "Packed so far" everywhere it's shown - kit
+    page, Final Submit dialog, My Contributions, the Drive Sheet) also lists, in the same first-use order,
     everything packed that has no number to count: a job number added as-is
     ("J456789" with no index) and a free-text item ("Window kit"), each once:
 
@@ -285,8 +285,9 @@ def series_report(items, full=True, include_unnumbered=False):
          "complete": True, "text": "Window kit - Packed."}
 
     A job number that also has numbered items is covered by its numbered line.
-    drive_sync leaves it off: the Sheet's Summary table is series / last
-    number / missing, which an unnumbered line has none of.
+    drive_sync includes them too: the Sheet's Summary table writes such a line
+    as "Packed (added as-is, no item numbers)" (see logKit_'s
+    writeKitSummaryTab_).
 
     Callers choose which items count: app.py passes only SAVED packs' items
     (the report is "what has been packed"), drive_sync passes everything."""

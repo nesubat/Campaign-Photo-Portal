@@ -547,14 +547,18 @@ def _kit_payload(kit_row, cfg):
     if previous_job:
         move_ids = [row["drive_file_id"] for rows in links_by_pack.values() for row in rows]
 
+    # The same "Packed so far" as the kit page, items added as-is included;
+    # numbered=False marks those (no index to count), which logKit_ writes as
+    # "Packed (added as-is ...)" rather than a blank number and "None" missing.
     report_payload = [
         {
             "series": entry["series"],
             "lastNumber": entry["lastNumber"],
             "missing": list(entry["missing"]),
             "text": entry["text"],
+            "numbered": bool(entry["lastNumber"]),
         }
-        for entry in kits.series_report(all_items)
+        for entry in kits.series_report(all_items, include_unnumbered=True)
     ]
 
     payload = {

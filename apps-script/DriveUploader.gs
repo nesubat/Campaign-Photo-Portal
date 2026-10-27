@@ -748,6 +748,11 @@ function writeKitSummaryTab_(ss, body) {
   const report = Array.isArray(body.report) ? body.report : [];
   const table = [['Series', 'Last Number', 'Missing']].concat(report.map(function (r) {
     const missing = Array.isArray(r.missing) ? r.missing : [];
+    // A job number added to a pack as-is, or a free-text item: packed, but
+    // with no index to count - say so rather than a blank number and "None".
+    if (r.numbered === false) {
+      return [String(r.series || ''), '—', 'Packed (added as-is, no item numbers)'];
+    }
     return [
       String(r.series || ''),
       r.lastNumber == null ? '' : String(r.lastNumber),
