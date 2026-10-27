@@ -23,8 +23,9 @@
 
   {#- One row per job number, most recent first, read like an inbox: what it is on the left, how long ago on
       the right, one quiet line of facts, and the one thing worth colour - a kit's "Packed so far" (red: numbers
-      missing, green: complete). A job with a New Store Kit IS that kit's row (tap it to open the kit), with its
-      Packing / Dispatch photos as links at the end; a job with no kit opens its photo page. A standard user sees
+      missing, green: complete). A job with a New Store Kit IS that kit's row - with the count of every photo on
+      the job - and opens the kit page, which shows the job's Packing / Dispatch photos above "Packed so far";
+      a job with no kit opens its photo page. A standard user sees
       the jobs they added to (ordered by their own latest contribution); an admin sees every job. -#}
   {% macro chevron() -%}
   <svg class="cl-chev" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -50,6 +51,8 @@
   </div>
   {%- endmacro %}
 
+  {% macro photos(n) -%}{{ n }} photo{{ 's' if n != 1 }}{%- endmacro %}
+
   {% macro when(c) -%}
   <time class="cl-when" datetime="{{ c['last_at'] }}" title="{{ 'Last contribution' if everyone else 'Your last contribution' }}: {{ c['last_at']|started_at }}">{{ c['last_at']|ago }}</time>
   {%- endmacro %}
@@ -66,7 +69,7 @@
             <span class="cl-title">{{ k['kit_name'] }}</span>
             {{ when(c) }}
           </div>
-          <div class="cl-meta">{{ c['job_number'] }} · New Store Kit · {{ kit_state(k) }} · {{ k['pack_count'] }} pack{{ 's' if k['pack_count'] != 1 }}</div>
+          <div class="cl-meta">{{ c['job_number'] }} · New Store Kit · {{ kit_state(k) }} · {{ k['pack_count'] }} pack{{ 's' if k['pack_count'] != 1 }} · {{ photos(c['total_photos']) }}</div>
           {{ report(k) }}
           {% if c['contributors'] %}<div class="cl-people">{{ c['contributors']|join(', ') }}</div>{% endif %}
         </a>
@@ -80,6 +83,8 @@
           <div class="cl-meta">
             {%- for label, n in c['category_counts'] %}{{ label[:1] ~ label[1:]|lower }} {{ n }}{{ ' · ' if not loop.last }}{% endfor -%}
           </div>
+          {% else %}
+          <div class="cl-meta">{{ kits_on|length }} New Store Kits · {{ photos(c['total_photos']) }}</div>
           {% endif %}
           {% if c['contributors'] %}<div class="cl-people">{{ c['contributors']|join(', ') }}</div>{% endif %}
         </a>
@@ -93,13 +98,6 @@
           {{ report(k) }}
         </a>
         {% endfor %}
-        {% endif %}
-        {% if kits_on and c['photo_links'] %}
-        <div class="cl-links">
-          {% for l in c['photo_links'] %}
-          <a href="{{ c['url'] }}#{{ l['key'] }}" class="cl-link">{{ l['label'][:1] ~ l['label'][1:]|lower }} <span class="cl-link-n">{{ l['count'] }}</span>{{ chevron() }}</a>
-          {% endfor %}
-        </div>
         {% endif %}
       </li>
       {% else %}

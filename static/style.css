@@ -852,8 +852,8 @@ html.kit-mode, html.kit-mode body { overscroll-behavior-y: contain; }
   color: var(--ink); text-decoration: none; -webkit-tap-highlight-color: transparent;
 }
 .cl-kit { padding-top: 10px; margin-left: 16px; padding-left: 12px; border-top: 1px solid var(--line); }
-.cl-main:active, .cl-kit:active, .cl-link:active { background: var(--surface-muted); }
-.cl-main:focus-visible, .cl-kit:focus-visible, .cl-link:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.cl-main:active, .cl-kit:active { background: var(--surface-muted); }
+.cl-main:focus-visible, .cl-kit:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .cl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .cl-title {
   min-width: 0; overflow-wrap: anywhere;
@@ -875,13 +875,6 @@ html.kit-mode, html.kit-mode body { overscroll-behavior-y: contain; }
 .cl-report-line.is-done { color: var(--good); }
 .cl-report-none { font-size: 13px; color: var(--text-muted); }
 .cl-people { font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; margin-top: 2px; }
-.cl-links { display: flex; flex-wrap: wrap; gap: 0 20px; padding: 0 16px 6px; margin-top: -6px; }
-.cl-link {
-  display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
-  color: var(--ink); font-size: 14px; font-weight: 600; text-decoration: none;
-  -webkit-tap-highlight-color: transparent;
-}
-.cl-link-n { color: var(--text-muted); font-weight: 500; }
 .cl-chev { flex-shrink: 0; color: var(--text-muted); }
 .cl-empty { padding: 40px 24px; text-align: center; color: var(--text-muted); font-size: 14px; line-height: 1.5; }
 .cl-empty p { margin: 0 0 6px; }
@@ -904,3 +897,18 @@ html.kit-mode, html.kit-mode body { overscroll-behavior-y: contain; }
 .contrib-kit-summary { display: flex; flex-direction: column; gap: 6px; padding: 0 16px 12px; margin-top: -4px; }
 .contrib-open-kit { align-self: flex-start; min-height: 44px; display: inline-flex; align-items: center; }
 .contrib-page-end { height: 40px; }
+
+/* "+ Packing photos" / "+ Dispatch photos" on a job's page (My Contributions). */
+.add-photos-bar { display: flex; gap: 10px; padding: 12px 16px 0; }
+.add-photos-form { flex: 1; margin: 0; }
+.add-photos-btn { width: 100%; min-height: 48px; padding: 12px 10px; font-size: 15px; }
+
+/* Upload page: this person's earlier photos of the job, below the current batch.
+   The batch's own grid gives up its submit-bar clearance to this section. */
+.has-previous #gallery { padding-bottom: 8px; }
+.prev-section { padding-bottom: 96px; border-top: 1px solid var(--line); margin-top: 8px; }
+.prev-sub { margin: -6px 16px 10px; font-size: 13px; color: var(--text-muted); }
+.prev-gallery { padding-bottom: 0; }
+
+/* Kit page: the job's Packing / Dispatch photos above "Packed so far". */
+.kit-job-photos .kit-photo-strip .thumb { flex: 0 0 72px; width: 72px; height: 72px; }

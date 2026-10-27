@@ -190,9 +190,11 @@ locally - nothing is ever deleted before Drive confirms it has the photo.
 
 **My Contributions** (start page button, or the name menu): one row per job number
 added to in the last `CONTRIBUTION_HISTORY_DAYS` (7) days, most recent first. A job
-with a New Store Kit shows as that kit - its state and "Packed so far" - and opens the
-kit page, with "Packing photos" / "Dispatch photos" links at the end; any other job
-opens a view-only page of its photos. Staff see the jobs they added to; admins see
+with a New Store Kit shows as that kit - its state, "Packed so far" and the job's total
+photo count - and opens the kit page, which also shows the job's Packing / Dispatch
+photos; any other job opens a view-only page of its photos, with "+ Packing photos" /
+"+ Dispatch photos" to add more. Coming back to a job in a Packing / Dispatch batch
+shows your earlier photos of it under "Previously attached". Staff see the jobs they added to; admins see
 every job (**All Contributions**). Tapping any photo in the portal opens it
 full screen on the same page, with a Download button.
 

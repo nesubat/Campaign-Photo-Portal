@@ -27,23 +27,22 @@
     {% if contributors %}<div class="cl-people">{{ contributors|join(', ') }}</div>{% endif %}
   </div>
 
+  {#- Add more photos to this job: straight into an upload session for it (the person's own open batch for
+      it if there is one, else a new one) - see contribution_add_photos. -#}
+  <div class="add-photos-bar">
+    {% for key, label in [('packing', 'Packing photos'), ('dispatch', 'Dispatch photos')] %}
+    <form method="post" action="/contributions/{{ job_number }}/add" class="add-photos-form">
+      <input type="hidden" name="category" value="{{ key }}">
+      <button type="submit" class="btn secondary add-photos-btn">+ {{ label }}</button>
+    </form>
+    {% endfor %}
+  </div>
+
   {#- Everything added to this job in the window, everyone's, newest first - only the kinds it actually has:
       Packing, Dispatch, then each New Store Kit (its state, its "Packed so far", its photos and the way into
       the kit page - the one place a kit is changed). A photo's label says only who took it (and its pack);
       the viewer's caption carries the rest. Tapping a photo opens it right here (viewer.js) with Download. -#}
-  {% macro photo_tile(p) -%}
-  {% set full_url = '/media/' ~ p['job_number'] ~ '/' ~ p['category'] ~ '/' ~ p['filename'] %}
-  {% set where = ('Pack ' ~ p['pack_number']) if p['pack_number'] else ('no pack' if p['kit_name'] else p['consignment_value']) %}
-  <a href="{{ full_url }}" target="_blank" rel="noopener" class="thumb"
-     data-caption="{{ p['employee_name'] }}{% if where %} · {{ where }}{% endif %} · {{ p['uploaded_at']|started_at }}">
-    {% if p['local_deleted_at'] %}
-    <div class="thumb-cleaned">☁️<br>View on Drive</div>
-    {% else %}
-    <img src="/media/{{ p['job_number'] }}/{{ p['category'] }}/thumbs/{{ p['thumb_filename'] }}" loading="lazy" alt="">
-    {% endif %}
-    <span class="tag">{% if p['pack_number'] %}Pack {{ p['pack_number'] }} · {% endif %}{{ p['employee_name'] }}{% if p['status'] != 'finalized' %} · not submitted{% endif %}</span>
-  </a>
-  {%- endmacro %}
+  {% from '_photo_tiles.html' import photo_tile %}
 
   {% for s in sections if s['photos'] %}
   <section class="contrib-section" id="{{ s['key'] }}">

@@ -743,6 +743,12 @@ def session_page(session_id):
         kit_poll_ms=_kit_poll_ms(),
         can_delete=True,  # the delete route itself still checks ownership, as before
         reopened_notice=False,
+        # The session owner's earlier photos of this job + photo type (other
+        # sessions), shown view-only under this batch's own.
+        previous_photos=db.previous_uploads(
+            sess["job_number"], sess["category"], sess["employee_name"], sess["id"]
+        ),
+        job_sections=[],
     )
 
 
@@ -772,7 +778,24 @@ def _kit_page(sess):
         # ?reopened=1: just reopened from the start page or the finished
         # kit's own page - the page says what that means for Drive.
         reopened_notice=request.args.get("reopened") == "1",
+        previous_photos=[],
+        # The kit's job's Packing / Dispatch photos (everyone's), shown above
+        # "Packed so far" - only the kinds the job has.
+        job_sections=_job_photo_sections(kit["job_number"]),
     )
+
+
+def _job_photo_sections(job_number):
+    """[{key, label, count, photos}] for a job's Packing and Dispatch photos,
+    only those it has (photos capped to the newest 200; count is all)."""
+    counts = db.job_photo_counts_since(job_number)
+    return [
+        {
+            "key": key, "label": label, "count": counts[key],
+            "photos": db.job_uploads_in_category(job_number, key),
+        }
+        for key, label in CATEGORIES.items() if key != NEW_STORE_KITS_CATEGORY and counts.get(key)
+    ]
 
 
 def _own_session_or_403(sess):
@@ -2110,11 +2133,9 @@ def _job_contribution_card(job_number, last_at, since):
         "job_number": job_number,
         "photo_count": sum(counts.values()),
         "category_counts": [(label, counts[key]) for key, label in CATEGORIES.items() if key in counts],
-        # Packing / Dispatch photos only - a kit's own photos are counted on the kit.
-        "photo_links": [
-            {"key": key, "label": label, "count": counts[key]}
-            for key, label in CATEGORIES.items() if key in counts and key != NEW_STORE_KITS_CATEGORY
-        ],
+        # Every photo of the job, ever, every kind - the count a kit row shows,
+        # since its tap opens the kit page, which shows them all.
+        "total_photos": sum(db.job_photo_counts_since(job_number).values()),
         "contributors": db.job_contributors_since(job_number, since),
         "kits": [_kit_summary(k) for k in db.job_kits_since(job_number, since)],
         "last_at": last_at,
@@ -2167,6 +2188,28 @@ def contribution_job(job_number):
         contributors=db.job_contributors_since(job_number, since),
         days=CONTRIBUTION_HISTORY_DAYS,
     )
+
+
+@app.route("/contributions/<job_number>/add", methods=["POST"])
+@auth.login_required
+def contribution_add_photos(job_number):
+    """"+ Packing photos" / "+ Dispatch photos" on a job's page: straight into
+    an upload session for this job. Resumes the person's own open batch for it
+    (the same one /start would offer), else starts one - keeping logs if the
+    job's packing already has consignment logs."""
+    job_number = sanitize_for_filename(job_number).upper()
+    category = request.form.get("category", "")
+    if not JOB_NUMBER_RE.match(job_number) or category not in CATEGORIES or category == NEW_STORE_KITS_CATEGORY:
+        abort(404)
+    existing = db.find_open_session(job_number, g.user["name"], category)
+    if existing:
+        return redirect(f"/session/{existing['id']}")
+    db.ensure_job(job_number)
+    job_dir(job_number, category).mkdir(parents=True, exist_ok=True)
+    keep_logs = category == CONSIGNMENT_LOGGING_CATEGORY and db.has_consignments(job_number, category)
+    session_id = uuid.uuid4().hex
+    db.create_session(session_id, job_number, g.user["name"], category, keep_logs=keep_logs)
+    return redirect(f"/session/{session_id}")
 
 
 def _drive_view_url(drive_file_id):

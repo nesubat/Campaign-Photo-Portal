@@ -11,7 +11,8 @@
   {% endif %}
   <link rel="stylesheet" href="{{ asset('style.css') }}">
 </head>
-<body>
+<body{% if previous_photos %} class="has-previous"{% endif %}>
+{% from '_photo_tiles.html' import photo_tile %}
   <header class="topbar">
     <div class="topbar-left">
       <a href="/" class="home-link"{% if kit_mode %} id="homeLink"{% endif %} title="Back to main page">🏠</a>
@@ -91,6 +92,22 @@
     <button type="submit" class="btn primary small">Save</button>
     <button type="button" class="btn secondary small" id="jobEditCancel">Cancel</button>
   </form>
+  {% endif %}
+
+  {% if kit_mode and job_sections %}
+  {#- The kit's job's own Packing / Dispatch photos (everyone's, newest first), above "Packed so far" - only
+      the kinds the job has. One sideways-scrolling row each, so they don't push the pack editor far down. -#}
+  {% for s in job_sections %}
+  <section class="kit-photos kit-job-photos" id="job-{{ s['key'] }}" aria-labelledby="jobPhotos-{{ s['key'] }}">
+    <div class="kit-photos-head">
+      <h2 id="jobPhotos-{{ s['key'] }}" class="kit-photos-heading">{{ s['label'] }}</h2>
+      <span class="kit-photos-count">{{ s['count'] }} photo{{ 's' if s['count'] != 1 }}</span>
+    </div>
+    <div class="pack-photo-strip kit-photo-strip">
+      {% for p in s['photos'] %}{{ photo_tile(p, label=false) }}{% endfor %}
+    </div>
+  </section>
+  {% endfor %}
   {% endif %}
 
   {% if kit_mode %}
@@ -384,6 +401,18 @@
     </a>
     {% endfor %}
   </div>
+  {% endif %}
+
+  {#- This person's earlier photos of the same job and photo type, from their other sessions - view only,
+      below this batch's own, so coming back to a job shows what's already there. -#}
+  {% if previous_photos %}
+  <section class="prev-section" aria-labelledby="prevHeading">
+    <h2 id="prevHeading" class="contrib-section-heading">Previously attached <span class="contrib-section-count">{{ previous_photos|length }}{{ '+' if previous_photos|length >= 200 }}</span></h2>
+    <p class="prev-sub">Your earlier {{ category_label|lower }} for {{ session['job_number'] }} · view only</p>
+    <div class="gallery prev-gallery">
+      {% for p in previous_photos %}{{ photo_tile(p) }}{% endfor %}
+    </div>
+  </section>
   {% endif %}
 
   {% if not finalized %}

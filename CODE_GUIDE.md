@@ -90,7 +90,7 @@ The Python app has **zero direct Google API credentials**. Every Drive/Sheets op
 | **Kit photo** | A photo in a kit that belongs to NO pack (`uploads.pack_id` NULL) — the kit page's "Kit photos" section, no reservation needed. Goes to Drive only: not listed in the Pack Log (`sheet_status` `not_applicable`). |
 | **Report** | "J456789 - Missing numbers: 02, 03, 07 & 08 until 09." (or "J456789 - Packed everything until 09.") per J-series, over SAVED packs only. |
 | **Pack label** | ZPL label printed on the server's Zebra: the kit name exactly as typed / "Pack N" / the pack's item lines. |
-| **My Contributions** | `/contributions`: ONE row per job number added to in the last `CONTRIBUTION_HISTORY_DAYS` (7), most recent first, inbox-style. A job with a New Store Kit is shown AS that kit (name, state, "Packed so far"; tap → the kit page) with its Packing / Dispatch photos as trailing links; a job without one shows its photo counts and opens a view-only photo page. A standard user sees the jobs they added to; an admin sees every job (**All Contributions**). See [§3.8](#38-my-contributions-and-the-photo-viewer). |
+| **My Contributions** | `/contributions`: ONE row per job number added to in the last `CONTRIBUTION_HISTORY_DAYS` (7), most recent first, inbox-style. A job with a New Store Kit is shown AS that kit (name, state, "Packed so far", the job's total photos; tap → the kit page, which also shows the job's Packing / Dispatch photos); a job without one shows its photo counts and opens a view-only photo page (with "+ Packing / Dispatch photos"). A Packing / Dispatch batch shows the person's earlier photos of the job under "Previously attached". A standard user sees the jobs they added to; an admin sees every job (**All Contributions**). See [§3.8](#38-my-contributions-and-the-photo-viewer). |
 
 ---
 
@@ -315,11 +315,12 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
   timestamps were too hard to read). Title and how long ago (`ago` filter; the exact time is the tooltip),
   one quiet line of facts, the people, and colour only where it means something: a kit's "Packed so far"
   line in red (numbers missing) or green (complete), its state (Submitted green / Reopened amber).
-  - **Job with one kit** → the row IS the kit (`db.job_kits_since` → `app._kit_summary`), tap → kit page;
-    the job's Packing / Dispatch photos follow as links (`photo_links` → `/contributions/<job>#packing` /
-    `#dispatch`).
-  - **Job with several kits** → titled by the job number (tap → photo page), one line per kit under it
-    (tap → that kit), then the same trailing links.
+  - **Job with one kit** → the row IS the kit (`db.job_kits_since` → `app._kit_summary`) plus the count of
+    EVERY photo on the job, ever (`total_photos`), tap → kit page. The kit page shows that job's Packing /
+    Dispatch photos above "Packed so far" (`app._job_photo_sections`: one sideways strip per kind the job has,
+    newest 200 each, `db.job_uploads_in_category`), so that count is what the page shows.
+  - **Job with several kits** → titled by the job number with the same total (tap → photo page), one line
+    per kit under it (tap → that kit).
   - **Job without a kit** → job number, "Packing photos 2 · Dispatch photos 1", tap → photo page.
 - **One job, one card, whoever started which session.** Photos were always stored per job, not per person:
   `uploads/<job>/<category>/` for every session of that job (and one `<Job>/<Category>` folder in Drive,
@@ -330,6 +331,17 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
   the kinds it has: Packing (`#packing`), Dispatch (`#dispatch`), then a section per kit (state, report, its
   photos labelled "Pack N", and **Open kit**). The kit page keeps its usual rules (a submitted kit shows
   "Reopen to make changes").
+- **Adding photos from the job page.** "+ Packing photos" / "+ Dispatch photos" post to
+  `/contributions/<job>/add` (`contribution_add_photos`): the person's own open batch for that job + type
+  (`db.find_open_session`, the same one /start would offer) is resumed, else a new one starts - keeping logs
+  when the job's packing already has consignment logs.
+- **"Previously attached" on the upload page.** A Packing / Dispatch batch shows, under its own photos, the
+  same person's earlier photos of the same job and type from their other sessions (`db.previous_uploads`,
+  newest 200, view only - no ×); upload.js never sees them (it only works inside `#gallery`). Tiles shared by
+  every view-only photo grid live in `templates/_photo_tiles.html`.
+- **Speed.** Each card's queries filter by job number inside every part (`job_contributors_since`), and
+  `idx_uploads_uploaded_at` / `idx_kit_pack_items_added_at` / `idx_uploads_employee_time` serve the window
+  lookups: on a year of synthetic history (256k photos) the admin list renders in ~20 ms (2 s before).
 - **Versioned static files.** Every template links `{{ asset('style.css') }}` / `{{ asset('kit.js') }}` …
   (`app._asset_url` → `/static/<file>?v=<last modified>`), so a phone fetches a changed stylesheet or script
   instead of drawing new pages with its cached old one (which shows bare, underlined links).
@@ -359,7 +371,7 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
 | Packing/Dispatch APIs | `POST /api/consignment/resolve` · `/api/consignment/item` · `/api/consignment/item/decrement`, `POST /api/upload` · `/api/delete` · `/api/finalize` |
 | New Store Kit APIs | `POST /api/kit/state` · `/pack/new` · `/pack/reserve` · `/pack/release` · `/item/add` · `/item/remove` · `/finalize` · `/rename` · `/labels/print`; `GET /session/<id>/labels` (preview). Kit photos use `/api/upload` and `/api/delete` too. |
 | Viewing photos | `GET /gallery/<job>`, `GET /media/<job>/<category>/<file>` (`?download=1` = as a download) and `/media/<job>/<category>/thumbs/<file>` |
-| My Contributions | `GET /contributions`, `GET /contributions/<job>` (§3.8) |
+| My Contributions | `GET /contributions`, `GET /contributions/<job>`, `POST /contributions/<job>/add` (§3.8) |
 
 | Function | Purpose |
 |---|---|
@@ -391,7 +403,7 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
 | `api_delete` (`POST /api/delete`) | Removes a not-yet-finalized photo (disk + DB), decrementing its consignment's photo count if tagged. |
 | `api_finalize` (`POST /api/finalize`) | The "Submit Batch" action — flips the session and its uploads to `finalized`. |
 | `gallery` (`GET /gallery/<job>`) | Read-only view of every photo ever uploaded for a job, across all sessions/employees (supervisor view). |
-| `contributions` / `contribution_job` / `_job_contribution_card` / `_kit_summary` / `_history_cutoff` | My Contributions: the card list and a job's view-only photo page - see [§3.8](#38-my-contributions-and-the-photo-viewer). |
+| `contributions` / `contribution_job` / `contribution_add_photos` / `_job_contribution_card` / `_kit_summary` / `_job_photo_sections` / `_history_cutoff` | My Contributions: the card list and a job's view-only photo page - see [§3.8](#38-my-contributions-and-the-photo-viewer). |
 | `media_thumb` / `media_full` | Serves a photo/thumbnail from local disk (`media_full` with `?download=1` sends it as a download - the viewer's button); if it's already been cleaned up locally, redirects to its Drive view URL instead (catches werkzeug's `NotFound`, which is what `send_from_directory` actually raises). A photo with no thumbnail (Pillow couldn't read it) gets the full image instead. |
 | `_start_kit` | The New Store Kits branch of `/start`: join / reopen / `kit_choice` / create, plus Pack 1 when the kit has nothing in it yet (no packs, no photos). Refuses a new kit named after another kit's not-yet-renamed Pack Log. |
 | `_kit_page` / `_kit_state` | Renders the kit page; builds the per-viewer **KitState** JSON every kit API returns (packs, groups, report, working, reservations, collaborators, `canFinalize`, kit photos, `rev`). |
@@ -451,7 +463,9 @@ concurrent phones don't block each other. Grouped by area:
   `rename_session_job` (corrected job number, merging consignments — §3.7), `recent_job_numbers` (the start
   page's job-number autocomplete, most recently used first).
 - **My Contributions**: `job_number_spellings`, `contributed_jobs_since` (one person's, or everyone's for an
-  admin), `job_contributors_since`, `job_photo_counts_since`, `job_kits_since`, `job_uploads_since` (§3.8;
+  admin), `job_contributors_since`, `job_photo_counts_since`, `job_kits_since`, `job_uploads_since`,
+  `job_uploads_in_category` (a kit page's job strips), `previous_uploads` (the upload page's "Previously
+  attached") (§3.8;
   `_activity_since_sql` is the shared "what counts as a contribution"; index `idx_uploads_employee_time`).
 - **Uploads**: `add_upload`, `get_upload`, `delete_upload`, `get_upload_by_filename`/`_by_thumb_filename`,
   `uploads_for_job` (everyone's photos), `uploads_for_session` (just this session's).
@@ -667,7 +681,7 @@ Loaded on every page via the `_user_menu.html` partial. Three small behaviors:
 | `admin.html` | User list + add-user form, approve/reset-PIN/toggle-role/delete actions, and User Sessions (everyone's unsubmitted batches, with Delete — §3.7). |
 | `change_pin.html` | Self-service PIN change. |
 | `gallery.html` | Read-only supervisor view (kit photos tagged "<Kit> · Pack N" / "no pack"). |
-| `contributions.html` / `contribution_job.html` | My / All Contributions: one row per job (a kit job shown as its kit, with trailing photo links); one job's view-only Packing, Dispatch and kit photos (§3.8). |
+| `contributions.html` / `contribution_job.html` / `_photo_tiles.html` | My / All Contributions: one row per job (a kit job shown as its kit, with the job's total photo count); one job's view-only Packing, Dispatch and kit photos with "+ Packing / Dispatch photos"; the shared view-only photo tile (§3.8). |
 | `labels_preview.html` | Pack labels as a printable page at the real label size, plus the raw ZPL. |
 | `_user_menu.html` | Shared dropdown partial, `{% include %}`d into every authenticated page's topbar. |
 

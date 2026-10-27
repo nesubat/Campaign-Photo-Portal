@@ -286,8 +286,11 @@ def _migrate(conn):
     # lives here rather than in init_db's CREATE script.
     _add_column_if_missing(conn, "uploads", "pack_id", "pack_id INTEGER")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_pack ON uploads(pack_id)")
-    # My Contributions (contributions_since): one person's recent photos.
+    # My Contributions (contributed_jobs_since): one person's recent photos,
+    # and everyone's for an admin; recent kit items.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_employee_time ON uploads(employee_name, uploaded_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_uploads_uploaded_at ON uploads(uploaded_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kit_pack_items_added_at ON kit_pack_items(added_at)")
     # Pack labels (labels.py): when a pack's label was last printed, by whom,
     # and how many times - shown on its card, so nobody prints a box twice
     # without meaning to. kit_packs may already exist from before labels.
@@ -1156,27 +1159,68 @@ def contributed_jobs_since(since_iso, employee_name=None):
 
 def job_contributors_since(job_number, since_iso):
     """Everyone who added anything to this job since `since_iso` - photos of
-    any kind, kit items, a kit started - in the order they first did."""
+    any kind, kit items, a kit started - in the order they first did. Each
+    part is filtered by the job itself, so it uses the job-number indexes
+    (filtering _activity_since_sql's result instead read the whole window
+    once per card - 2 s for the admin's page on a year of history)."""
+    spellings = job_number_spellings(job_number)
     conn = get_conn()
     return [
         row["who"] for row in conn.execute(
-            f"""SELECT who, MIN(at) AS first_at FROM ({_activity_since_sql(False)})
-                WHERE job_number = ? GROUP BY who ORDER BY first_at ASC""",
-            (since_iso, since_iso, since_iso, job_number.upper()),
+            """SELECT who, MIN(at) AS first_at FROM (
+                   SELECT employee_name AS who, uploaded_at AS at FROM uploads
+                    WHERE job_number IN (?, ?) AND uploaded_at >= ?
+                   UNION ALL
+                   SELECT i.added_by, i.added_at FROM kit_pack_items i JOIN kits k ON k.session_id = i.session_id
+                    WHERE k.job_number IN (?, ?) AND i.added_at >= ?
+                   UNION ALL
+                   SELECT created_by, created_at FROM kits WHERE job_number IN (?, ?) AND created_at >= ?
+               ) GROUP BY who ORDER BY first_at ASC""",
+            (*spellings, since_iso, *spellings, since_iso, *spellings, since_iso),
         ).fetchall()
     ]
 
 
-def job_photo_counts_since(job_number, since_iso):
-    """{category: photo count} for this job since `since_iso`, everyone's."""
+def job_photo_counts_since(job_number, since_iso=None):
+    """{category: photo count} for this job since `since_iso` (None: ever),
+    everyone's."""
     conn = get_conn()
     rows = conn.execute(
         """SELECT category, COUNT(*) AS n FROM uploads
            WHERE job_number IN (?, ?) AND uploaded_at >= ?
            GROUP BY category""",
-        (*job_number_spellings(job_number), since_iso),
+        (*job_number_spellings(job_number), since_iso or ""),
     ).fetchall()
     return {row["category"]: row["n"] for row in rows}
+
+
+def job_uploads_in_category(job_number, category, limit=200):
+    """Everyone's photos of this job in one category, ever, newest first -
+    the Packing / Dispatch strips a kit's page shows for its job."""
+    conn = get_conn()
+    return conn.execute(
+        """SELECT u.*, c.key_value AS consignment_value
+           FROM uploads u LEFT JOIN consignments c ON c.id = u.consignment_id
+           WHERE u.job_number IN (?, ?) AND u.category = ?
+           ORDER BY u.uploaded_at DESC, u.id DESC LIMIT ?""",
+        (*job_number_spellings(job_number), category, limit),
+    ).fetchall()
+
+
+def previous_uploads(job_number, category, employee_name, exclude_session_id, limit=200):
+    """This person's earlier photos of the same job and photo type, from
+    their OTHER sessions (submitted or not), newest first - the upload page's
+    "Previously attached" section, so coming back to a job shows what's
+    already there."""
+    conn = get_conn()
+    return conn.execute(
+        """SELECT u.*, c.key_value AS consignment_value
+           FROM uploads u LEFT JOIN consignments c ON c.id = u.consignment_id
+           WHERE u.job_number IN (?, ?) AND u.category = ? AND u.employee_name = ?
+             AND u.session_id != ?
+           ORDER BY u.uploaded_at DESC, u.id DESC LIMIT ?""",
+        (*job_number_spellings(job_number), category, employee_name, exclude_session_id, limit),
+    ).fetchall()
 
 
 def job_kits_since(job_number, since_iso):

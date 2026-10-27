@@ -1,0 +1,18 @@
+{#- One view-only photo tile, shared by My Contributions' job page, the upload page's "Previously attached"
+    and a kit page's Packing / Dispatch strips. Tapping it opens viewer.js (same tab, with Download); a photo
+    whose local copy was cleaned up after reaching Drive links to Drive instead. label=false: no caption bar
+    (small strip tiles) - the viewer's caption still says who took it and when. -#}
+{% macro photo_tile(p, label=true) -%}
+{% set where = ('Pack ' ~ p['pack_number']) if p['pack_number'] else ('no pack' if p['kit_name'] else p['consignment_value']) %}
+<a href="/media/{{ p['job_number'] }}/{{ p['category'] }}/{{ p['filename'] }}" target="_blank" rel="noopener" class="thumb"
+   data-caption="{{ p['employee_name'] }}{% if where %} · {{ where }}{% endif %} · {{ p['uploaded_at']|started_at }}">
+  {% if p['local_deleted_at'] %}
+  <div class="thumb-cleaned">☁️<br>View on Drive</div>
+  {% else %}
+  <img src="/media/{{ p['job_number'] }}/{{ p['category'] }}/thumbs/{{ p['thumb_filename'] }}" loading="lazy" alt="">
+  {% endif %}
+  {% if label %}
+  <span class="tag">{% if p['pack_number'] %}Pack {{ p['pack_number'] }} · {% elif p['consignment_value'] %}{{ p['consignment_value'] }} · {% endif %}{{ p['employee_name'] }}{% if p['status'] != 'finalized' %} · not submitted{% endif %}</span>
+  {% endif %}
+</a>
+{%- endmacro %}
