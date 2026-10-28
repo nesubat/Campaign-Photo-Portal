@@ -180,7 +180,8 @@ as needed (up to 300) on the pack-label printer above, with the same label setti
 **Aa** for alignment (left / center / right), position (top / middle / bottom) and
 size - **Auto** (as big as the label allows, smaller as you type more) or a set size in
 points. New texts start centred, in the middle, on Auto. Tick **Number the copies** to
-add a counter - "Box 3 of 10" or just "Box 3" - with its own **Aa** too. The preview is
+add a counter - "Box 3 of 10" or just "Box 3" - with its own **Aa** too; on **Auto** it
+stays a little smaller than the last text (a set size overrides that). The preview is
 exactly what prints (‹ › pages through numbered copies); set sizes that don't fit are
 made smaller (never below 8 pt) and the page says so. The draft is remembered in that
 browser until **Start over**.

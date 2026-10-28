@@ -2175,7 +2175,8 @@ def _scratch_spec(data):
     """The Scratchpad request (JSON) -> (spec for labels.scratch_*, error).
     {"fields": [{"value", "align", "valign", "sizePt": pt | "auto"}, ...], "copies",
      "numbering": {"enabled", "prefix", "format", "align", "valign", "sizePt"}}
-    A field's defaults are centred, in the middle, Auto size."""
+    A field's defaults are centred, in the middle, Auto size; the counter's
+    are centred, at the bottom, Auto (smaller than the last text)."""
     raw_fields = data.get("fields")
     if not isinstance(raw_fields, list) or not raw_fields:
         raw_fields = [{}]
@@ -2199,7 +2200,7 @@ def _scratch_spec(data):
         if len(prefix) > labels.SCRATCH_MAX_PREFIX:
             return None, f"The text before the number can be {labels.SCRATCH_MAX_PREFIX} characters at most."
         number_format = num_raw.get("format") if num_raw.get("format") in labels.SCRATCH_NUMBER_FORMATS else "of_total"
-        n_align, n_valign, n_size = _scratch_style(num_raw, 28, "bottom")
+        n_align, n_valign, n_size = _scratch_style(num_raw, None, "bottom")
         numbering = {"prefix": prefix, "format": number_format, "align": n_align, "valign": n_valign,
                      "sizePt": n_size}
     if not any(f["value"].strip() for f in fields) and numbering is None:

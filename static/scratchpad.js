@@ -13,7 +13,8 @@
   var HAS_PRINTER = root.getAttribute('data-has-printer') === '1';
   var PREVIEW_URL = '/api/scratchpad/preview';
   var PRINT_URL = '/api/scratchpad/print';
-  var STORAGE_KEY = 'scratchpad.v2';
+  // v3: the number's size became Auto by default (v2 drafts kept a set 28 pt).
+  var STORAGE_KEY = 'scratchpad.v3';
   var PREVIEW_DELAY_MS = 250;
   var CONFIRM_COPIES_OVER = 20;
   var DEFAULT_SET_SIZE = 48;  // "Set size" with no Auto size measured yet
@@ -24,8 +25,9 @@
   var VALIGN_NAMES = { top: 'Top', middle: 'Middle', bottom: 'Bottom' };
 
   function newField() { return { value: '', align: 'center', valign: 'middle', sizePt: 'auto' }; }
+  // The number's Auto = a little smaller than the last text (labels.SCRATCH_COUNTER_SHARE).
   function newNumbering() {
-    return { enabled: false, prefix: '', format: 'of_total', align: 'center', valign: 'bottom', sizePt: 28 };
+    return { enabled: false, prefix: '', format: 'of_total', align: 'center', valign: 'bottom', sizePt: 'auto' };
   }
 
   var state = { fields: [newField()], copies: 1, numbering: newNumbering() };
@@ -243,8 +245,11 @@
     setRadio('fmtSizeMode', isAuto(editing) ? 'auto' : 'fixed');
     show(dialogSizeRow, !isAuto(editing));
     if (!isAuto(editing)) dialogSize.value = editing.sizePt;
+    var autoHint = editing === state.numbering
+      ? 'Auto: a little smaller than the last text, and follows it as it gets bigger or smaller.'
+      : 'Auto: as big as the label allows - it gets smaller as you type more.';
     dialogHint.textContent = isAuto(editing)
-      ? 'Auto: as big as the label allows - it gets smaller as you type more.'
+      ? autoHint
       : 'If it doesn\'t fit, it\'s made smaller to fit (never below ' + LIMITS.minPt + ' pt).';
   }
 

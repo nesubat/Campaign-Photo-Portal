@@ -375,8 +375,8 @@ pack-label printer with the same settings (`config.load_label_config()` — `.en
 `LABEL_*`); no printer set there → Print is disabled and the page says so. The page sends the whole form as
 JSON — `{fields: [{value, align, valign, sizePt}, …], copies, numbering: {enabled, prefix, format, align,
 valign, sizePt}}`, where `sizePt` is points or `"auto"` — checked by `app._scratch_spec` (unknown values →
-defaults: centre / middle / Auto for a text; sizes 8–300 pt, 1–10 texts, 1–300 copies, 2000 characters in
-all). Each field's look is set in ONE shared popup (`#spFormatDialog`, docked at the bottom so the live
+defaults: centre / middle / Auto for a text, centre / bottom / Auto for the counter; sizes 8–300 pt, 1–10
+texts, 1–300 copies, 2000 characters in all). Each field's look is set in ONE shared popup (`#spFormatDialog`, docked at the bottom so the live
 preview stays in view), opened from the field's **Aa**; the card shows it in one line ("Center · Middle ·
 Auto (73 pt)").
 
@@ -387,16 +387,21 @@ Auto (73 pt)").
   right, and in its zone — top (from the top margin), middle (centred), bottom (up from the bottom margin).
   Fields in the same zone stack in order, texts first, the counter last. Nothing may cross a margin or
   another zone, and no word may be cut.
-- **Sizes** (`labels.scratch_fit` → `(auto_pt, scale, break_words)`): every Auto field gets the SAME size —
-  the largest (to 0.5 pt, by bisection) that fits with every set size as chosen. If even Auto at 8 pt
-  can't make room, the set sizes shrink too (by `SCRATCH_SHRINK` steps, each stopping at `SCRATCH_MIN_PT`).
+- **Sizes** (`labels.scratch_fit` → `(auto_pt, scale, break_words)`): every Auto text gets the SAME size —
+  the largest (to 0.5 pt, by bisection) that fits with every set size as chosen. The counter's Auto is
+  relative instead (`labels._counter_size`): `SCRATCH_COUNTER_SHARE` (0.6) of the LAST text's printed
+  size, so it always reads smaller than that text and follows it (alone, with no text, it's plain Auto);
+  a set size overrides it. If even Auto at 8 pt
+  can't make room, the set sizes shrink too (by `SCRATCH_SHRINK` steps, each stopping at `SCRATCH_MIN_PT`),
+  just until it fits — then the Auto size is searched again, so Auto texts take the room that's left.
   Only if nothing fits with whole words is a word cut (`break_words` — e.g. a long code with no spaces);
   past that it's `too_big`, never an unreadable label. Measured with the LAST copy's counter ("Box 12 of
   12", the widest), so every copy prints the same size; the page says when set sizes were shrunk.
 - **Print** (`POST /api/scratchpad/print`): `labels.scratch_pages` → `to_zpl(..., quantity)` → ONE
   `send_raw` job named "Scratchpad - <first line>". Plain copies are one label with `^PQ<copies>` (the
   printer repeats it); numbered copies are one label each. Asks first above 20 copies.
-- The draft is kept in that browser's `localStorage` (`scratchpad.v2`) until **Start over**.
+- The draft is kept in that browser's `localStorage` (`scratchpad.v3`; v2 drafts, which saved the counter at
+  a set 28 pt, aren't read) until **Start over**.
 
 ---
 

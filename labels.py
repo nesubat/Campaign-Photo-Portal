@@ -833,13 +833,17 @@ def size_text(cfg):
 # 12", or just "Box 3"). Each field has its own horizontal alignment (left /
 # center / right), vertical position (top / middle / bottom) and size: a size
 # in points, like a word processor, or Auto (the default) - as big as the label
-# allows, getting smaller as more text is typed. Fields given the same
-# position are stacked there in order (texts first, the counter last). Fields
-# never overlap and never run off the label:
+# allows, getting smaller as more text is typed. The counter's Auto is
+# different: SCRATCH_COUNTER_SHARE of the last text's size, so it always reads
+# as smaller than that text and follows it as it grows or shrinks (on its own,
+# with no text, it's as big as fits). Fields given the same position are
+# stacked there in order (texts first, the counter last). Fields never overlap
+# and never run off the label:
 #   1. Auto fields all get the same size: the largest that fits with every
 #      fixed-size field at the size chosen for it.
 #   2. If the fixed sizes don't fit even with Auto fields at their smallest,
-#      every fixed size shrinks by the same factor too (the page says so).
+#      every fixed size shrinks by the same factor too, just enough (the page
+#      says so) - and Auto fields then take the room that's left.
 #   3. Nothing ever goes below SCRATCH_MIN_PT - past that it's an error, not
 #      an unreadable label.
 
@@ -858,6 +862,8 @@ SCRATCH_FIELD_GAP = 0.35
 SCRATCH_SHRINK = 0.93
 # Auto size is found to the nearest half point.
 SCRATCH_AUTO_STEP = 0.5
+# The counter on Auto: this share of the last text's size.
+SCRATCH_COUNTER_SHARE = 0.6
 
 
 def pt_dots(pt, dpi):
@@ -886,6 +892,21 @@ def _field_size(size_pt, fit):
     return auto_pt if size_pt is None else _shrunk(size_pt, scale)
 
 
+def _counter_size(spec, fit):
+    """The size the counter prints at: its chosen size (after any shrink), or
+    on Auto, SCRATCH_COUNTER_SHARE of the last text's size - to the half
+    point, never below SCRATCH_MIN_PT - or, with no text at all, the fit's
+    auto size."""
+    size_pt = spec["numbering"]["sizePt"]
+    if size_pt is not None:
+        return _shrunk(size_pt, fit[1])
+    texts = [f for f in spec["fields"] if f["value"].strip()]
+    if not texts:
+        return fit[0]
+    share = _field_size(texts[-1]["sizePt"], fit) * SCRATCH_COUNTER_SHARE
+    return max(float(SCRATCH_MIN_PT), math.floor(share / SCRATCH_AUTO_STEP) * SCRATCH_AUTO_STEP)
+
+
 def scratch_fields(spec, copy_number, fit=(SCRATCH_MAX_PT, 1.0, False)):
     """The fields on one copy, each {"text", "align", "valign", "sizePt"} with
     its final size: every text field that has text, then - when numbering -
@@ -902,7 +923,7 @@ def scratch_fields(spec, copy_number, fit=(SCRATCH_MAX_PT, 1.0, False)):
         fields.append({
             "text": scratch_counter_text(numbering["prefix"], numbering["format"], copy_number, spec["copies"]),
             "align": numbering["align"], "valign": numbering["valign"],
-            "sizePt": _field_size(numbering["sizePt"], fit),
+            "sizePt": _counter_size(spec, fit),
         })
     return fields
 
@@ -913,7 +934,7 @@ def scratch_sizes(spec, fit):
     sizes = {"fields": [round(_field_size(f["sizePt"], fit), 1) if f["value"].strip() else None
                         for f in spec["fields"]]}
     if spec.get("numbering"):
-        sizes["counter"] = round(_field_size(spec["numbering"]["sizePt"], fit), 1)
+        sizes["counter"] = round(_counter_size(spec, fit), 1)
     return sizes
 
 
@@ -1006,24 +1027,30 @@ def scratch_fit(spec, cfg, metrics=None):
             fields = scratch_fields(spec, spec["copies"], (auto_pt, scale, break_words))
             return _scratch_place(m, fields, cfg, break_words) is not None
 
-        # 1. Fixed sizes as chosen; Auto fields as big as that leaves room for.
-        if fits(floor):
-            if len(fixed) == len(sizes) or fits(ceiling):
-                return ceiling, 1.0, break_words
+        def biggest_auto(scale):
+            """Auto fields as big as the fixed sizes (at `scale`) leave room
+            for - given that they fit at `floor`."""
+            if len(fixed) == len(sizes) or fits(ceiling, scale):
+                return ceiling
             lo, hi = floor, ceiling  # lo fits, hi doesn't
             while hi - lo > SCRATCH_AUTO_STEP:
                 mid = (lo + hi) / 2
-                if fits(mid):
+                if fits(mid, scale):
                     lo = mid
                 else:
                     hi = mid
-            return math.floor(lo / SCRATCH_AUTO_STEP) * SCRATCH_AUTO_STEP, 1.0, break_words
-        # 2. Doesn't fit even with Auto fields at their smallest: fixed sizes shrink too.
+            return math.floor(lo / SCRATCH_AUTO_STEP) * SCRATCH_AUTO_STEP
+
+        # 1. Fixed sizes as chosen; Auto fields as big as that leaves room for.
+        if fits(floor):
+            return biggest_auto(1.0), 1.0, break_words
+        # 2. Doesn't fit even with Auto fields at their smallest: fixed sizes
+        #    shrink too, just enough - then Auto fields take what room is left.
         scale = 1.0
         while fixed and max(fixed) * scale > floor:
             scale *= SCRATCH_SHRINK
             if fits(floor, scale):
-                return floor, scale, break_words
+                return biggest_auto(scale), scale, break_words
         return None
 
     fit = attempt(False) or attempt(True)
