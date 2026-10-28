@@ -5,6 +5,7 @@
     <span class="user-menu-caret">▾</span>
   </button>
   <div class="user-menu-dropdown hidden">
+    <a href="/scratchpad" class="user-menu-item">Scratchpad</a>
     {% if current_user.role == 'admin' %}
     <a href="/admin" class="user-menu-item">Admin</a>
     {% endif %}

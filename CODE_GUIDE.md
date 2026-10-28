@@ -90,6 +90,7 @@ The Python app has **zero direct Google API credentials**. Every Drive/Sheets op
 | **Kit photo** | A photo in a kit that belongs to NO pack (`uploads.pack_id` NULL) — the kit page's "Kit photos" section, no reservation needed. Goes to Drive only: not listed in the Pack Log (`sheet_status` `not_applicable`). |
 | **Report** | "J456789 - Missing numbers: 02, 03, 07 & 08 until 09." (or "J456789 - Packed everything until 09.") per J-series, over SAVED packs only. On screen ("Packed so far": kit page, Final Submit, My Contributions) also "J456789 - Packed." / "Window kit - Packed." for a job number added as-is or a free-text item - on the Drive Sheet's Summary too ("—" / "Packed (added as-is, no item numbers)", needs the redeployed Apps Script). |
 | **Pack label** | ZPL label printed on the server's Zebra: the kit name exactly as typed / "Pack N" / the pack's item lines. |
+| **Scratchpad** | `/scratchpad`: free text printed on the same Zebra (`.env`'s `LABEL_PRINTER_NAME` and `LABEL_*` settings) — any logged-in user. Text 1, Text 2 … (up to 10) and an optional numbering field ("Box 3 of 10" / "Box 3"), each with its own alignment, position and size (Auto by default), set in a popup; N copies in one spooler job. |
 | **My Contributions** | `/contributions`: ONE row per job number added to in the last `CONTRIBUTION_HISTORY_DAYS` (7), most recent first, inbox-style. Every row is headed by its job number. A job with a New Store Kit is shown as that kit (name, state, "Packed so far", the job's total photos; tap → the kit page, which also shows the job's Packing / Dispatch photos); a job without one shows its photo counts and opens a view-only photo page (with "+ Packing / Dispatch photos"). A Packing / Dispatch batch shows everyone's other photos of the job and type under "Already attached", one section per person. A standard user sees the jobs they added to; an admin sees every job (**All Contributions**). See [§3.8](#38-my-contributions-and-the-photo-viewer). |
 
 ---
@@ -367,6 +368,36 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
   page (which on a kit page would release the held pack). "In Drive" tiles, × / Retry buttons and
   Ctrl/⌘-clicks are left as they were.
 
+### 3.9 Scratchpad
+
+`GET /scratchpad` (`scratchpad.html` + `static/scratchpad.js`; linked from the user menu). It prints on the
+pack-label printer with the same settings (`config.load_label_config()` — `.env`'s `LABEL_PRINTER_NAME` and
+`LABEL_*`); no printer set there → Print is disabled and the page says so. The page sends the whole form as
+JSON — `{fields: [{value, align, valign, sizePt}, …], copies, numbering: {enabled, prefix, format, align,
+valign, sizePt}}`, where `sizePt` is points or `"auto"` — checked by `app._scratch_spec` (unknown values →
+defaults: centre / middle / Auto for a text; sizes 8–300 pt, 1–10 texts, 1–300 copies, 2000 characters in
+all). Each field's look is set in ONE shared popup (`#spFormatDialog`, docked at the bottom so the live
+preview stays in view), opened from the field's **Aa**; the card shows it in one line ("Center · Middle ·
+Auto (73 pt)").
+
+- **Preview** (`POST /api/scratchpad/preview`, + `page` = which copy): `labels.scratch_fit` →
+  `labels.scratch_page` → `page_png` — the very image the printer gets — plus `sizes` (what each field
+  actually prints at). Debounced (250 ms), older requests aborted; ‹ › pages through numbered copies.
+- **Layout** (`labels._scratch_place`): each field is word-wrapped (newlines kept) and placed left / centre /
+  right, and in its zone — top (from the top margin), middle (centred), bottom (up from the bottom margin).
+  Fields in the same zone stack in order, texts first, the counter last. Nothing may cross a margin or
+  another zone, and no word may be cut.
+- **Sizes** (`labels.scratch_fit` → `(auto_pt, scale, break_words)`): every Auto field gets the SAME size —
+  the largest (to 0.5 pt, by bisection) that fits with every set size as chosen. If even Auto at 8 pt
+  can't make room, the set sizes shrink too (by `SCRATCH_SHRINK` steps, each stopping at `SCRATCH_MIN_PT`).
+  Only if nothing fits with whole words is a word cut (`break_words` — e.g. a long code with no spaces);
+  past that it's `too_big`, never an unreadable label. Measured with the LAST copy's counter ("Box 12 of
+  12", the widest), so every copy prints the same size; the page says when set sizes were shrunk.
+- **Print** (`POST /api/scratchpad/print`): `labels.scratch_pages` → `to_zpl(..., quantity)` → ONE
+  `send_raw` job named "Scratchpad - <first line>". Plain copies are one label with `^PQ<copies>` (the
+  printer repeats it); numbered copies are one label each. Asks first above 20 copies.
+- The draft is kept in that browser's `localStorage` (`scratchpad.v2`) until **Start over**.
+
 ---
 
 ## 4. File-by-file reference
@@ -384,6 +415,7 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
 | New Store Kit APIs | `POST /api/kit/state` · `/pack/new` · `/pack/reserve` · `/pack/release` · `/item/add` · `/item/remove` · `/finalize` · `/rename` · `/labels/print` · `/labels/test`; `GET /session/<id>/labels` (preview; `?test=1` = the test label). Kit photos use `/api/upload` and `/api/delete` too. |
 | Viewing photos | `GET /gallery/<job>`, `GET /media/<job>/<category>/<file>` (`?download=1` = as a download) and `/media/<job>/<category>/thumbs/<file>` |
 | My Contributions | `GET /contributions`, `GET /contributions/<job>`, `POST /contributions/<job>/add` (§3.8) |
+| Scratchpad | `GET /scratchpad`, `POST /api/scratchpad/preview` · `/api/scratchpad/print` (§3.9) |
 
 | Function | Purpose |
 |---|---|
@@ -426,6 +458,7 @@ job number. Kits follow their own rules (§3.5); every route below hands a kit o
 | `api_kit_finalize` | Final Submit: collaborator/admin only, `confirm: "yes"`, `rev` must match. |
 | `api_kit_rename` | Rename an open kit (unique per job, and not to a name another kit's Drive Sheet still carries); with a different `job_number` it moves the kit to that job (`_kit_change_job`, which uses `_move_upload_files`). |
 | `api_kit_labels_print` / `labels_preview` | Print labels / the HTML preview page. |
+| `scratchpad_page` / `api_scratchpad_preview` / `api_scratchpad_print` / `_scratch_spec` / `_scratch_style` | The Scratchpad (§3.9). |
 | `_kit_upload` / `_kit_general_upload` / `_kit_delete_photo` / `_kit_delete_general_photo` | Kit photo upload/delete: pack photos need the pack held; kit photos (no pack) need only an open kit and can be removed by their uploader or an admin; submitted photos are locked. |
 | `release_my_packs`, `reopen_kit_route` (`/session/<id>/reopen`), kit branch of `delete_session`, `logout` | Start-page [Release]; "Reopen to make changes"; creator/admin-only delete of a never-submitted kit; log out releases held packs. |
 
@@ -438,15 +471,18 @@ always agree), `series_buttons` (J-series quick-pick, first-use order), `series_
 "Packed everything until N" report; `full=False` for the per-poll page, which never materialises a huge list for a typo like 999999;
 `include_unnumbered=True` - every caller, the Sheet included - adds "<item> - Packed." for a job number added as-is or a free-text item).
 
-### `labels.py` — Zebra pack labels
+### `labels.py` — Zebra pack labels and the Scratchpad
 
 `label_content`, `metrics_for` (Arial Black → Pillow's font → the printer's font), `layout` (landscape
 design canvas, centred, measured wrapping, one label with self-shrinking fonts), `render_page` /
-`printer_image` / `page_png`, `to_zpl` (`^GFA`), `decode_gf_data` (its inverse, for checking), `to_html`
+`printer_image` / `page_png`, `to_zpl` (`^GFA`; `quantity` → `^PQ`; a block's `align` is honoured on the
+built-in-font path), `decode_gf_data` (its inverse, for checking), `to_html`
 (the preview = the same image), `kit_labels_pdf` / `pdf_bytes` (the kit's labels PDF for Drive: one
 label-sized page per pack, the same images, saved by Pillow — 1-bit, a couple of KB per label), `send_raw` (ctypes winspool,
 RAW, aborts a half-written job),
-`list_printers`, `startup_lines` (names the font and warns if `LABEL_FONT_FILE` didn't load), and a CLI:
+`list_printers`, `startup_lines` (names the font and warns if `LABEL_FONT_FILE` didn't load), the
+Scratchpad's `scratch_fields` / `scratch_fit` / `scratch_page` / `scratch_pages` / `scratch_sizes` /
+`_scratch_place` (§3.9, limits `SCRATCH_*`), and a CLI:
 `py labels.py --list-printers | --sample-zpl | --sample-png FILE | --test-print [--printer NAME]`.
 
 ### `auth.py` — login accounts
@@ -679,6 +715,18 @@ One delegated click listener: a tap on any `<a class="thumb">` linking a full-si
 full screen in a `<dialog>` on the same page, with Download and ×; Back / Esc / a tap outside close it. Loaded by
 `upload.html` (all modes), `gallery.html` and `contribution_job.html` - see [§3.8](#38-my-contributions-and-the-photo-viewer).
 
+### `static/scratchpad.js` — the Scratchpad page
+
+Keeps the whole label in one `state` object (`fields`, `copies`, `numbering`) and sends it as one request
+(`spec`). Draws a card per text from `#spFieldTemplate` — rebuilt only on add / remove / restore, never
+while typing, so the keyboard stays up — with **Aa** opening the shared format popup on that field
+(`openFormat`; "Set size" starts from the size Auto was printing it at, so nothing jumps) and × removing
+it (asking first if it has text). Keeps the controls in step (each card's "Center · Middle · Auto (73 pt)"
+line from the last preview's `sizes`, counter examples like "Box 1 of 10", "Print N copies", the ‹ ›
+pager), fetches the preview after each change (debounced, aborting the previous one, ignoring stale
+answers), steps sizes along a word-processor ladder (8, 9 … 72 … 300 pt), asks before printing more than
+20 copies, and keeps the draft in `localStorage`. See [§3.9](#39-scratchpad).
+
 ### `static/topbar.js`
 
 Loaded on every page via the `_user_menu.html` partial. Three small behaviors:
@@ -702,7 +750,8 @@ Loaded on every page via the `_user_menu.html` partial. Three small behaviors:
 | `gallery.html` | Read-only supervisor view (kit photos tagged "<Kit> · Pack N" / "no pack"). |
 | `contributions.html` / `contribution_job.html` / `_photo_tiles.html` | My / All Contributions: one row per job (a kit job shown as its kit, with the job's total photo count); one job's view-only Packing, Dispatch and kit photos with "+ Packing / Dispatch photos"; the shared view-only photo tile (§3.8). |
 | `labels_preview.html` | Pack labels as a printable page at the real label size, plus the raw ZPL. |
-| `_user_menu.html` | Shared dropdown partial, `{% include %}`d into every authenticated page's topbar. |
+| `scratchpad.html` | The Scratchpad (§3.9): printer line, preview + pager, the text cards (from `#spFieldTemplate`) + Add text, copies and numbering, the shared format popup, fixed Print bar. |
+| `_user_menu.html` | Shared dropdown partial, `{% include %}`d into every authenticated page's topbar: Scratchpad, Admin (admins), My / All Contributions, Change PIN, Log out. |
 
 `index.html` also carries the My Contributions button (§3.8), the non-aggressive job-number autocomplete (≥3 typed characters that are still a
 valid `J`+digits prefix, prefix match, max 5, most recently used first, tap to fill — never auto-fills;

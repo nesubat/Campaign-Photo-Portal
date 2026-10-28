@@ -17,6 +17,10 @@ label and Windows' own Arial Black (C:\\Windows\\Fonts\\ariblk.ttf) are
 assumed, and with no printer name set, Print opens a preview page
 (GET /session/<id>/labels) instead of printing.
 
+The Scratchpad (scratch_* below) prints free text on the same printer, with
+the same settings: Text 1, Text 2, ... and, optionally, a "Box 3 of 12"
+counter, each with its own alignment, position and font size.
+
 Arial Black isn't a font the Zebra has, so the label is DRAWN here, on the
 server, with that .ttf (Pillow - already used for thumbnails) and sent to the
 printer as one image (a ZPL ^GF graphic). That also means text is measured
@@ -672,9 +676,11 @@ def zpl_escape(text):
     return "".join(out)
 
 
-def to_zpl(pages, cfg, metrics=None):
-    """The pages as ZPL, one ^XA...^XZ format per label. ^PW/^LL = the
-    label's width/length in dots; ^LH0,0 = no label home offset.
+def to_zpl(pages, cfg, metrics=None, quantity=1):
+    """The pages as ZPL, one ^XA...^XZ format per label, each printed
+    `quantity` times (^PQ - the printer repeats the label itself, so 200
+    identical Scratchpad copies are sent once). ^PW/^LL = the label's
+    width/length in dots; ^LH0,0 = no label home offset.
     Deliberately no media type, darkness or speed commands - those stay
     whatever the printer itself is set up for (its own calibration knows its
     stock better than a guess here).
@@ -698,14 +704,16 @@ def to_zpl(pages, cfg, metrics=None):
                 if b["kind"] == "rule":
                     out.append(f"^FO{b['x']},{b['y']}^GB{b['w']},{b['h']},{b['h']}^FS")
                 else:
-                    # centred by the printer across the printable width (one line - wrapping is done here)
+                    # aligned by the printer across the printable width (one line - wrapping is done
+                    # here): centred, or the Scratchpad's left/right
                     _, _, margin = label_size_dots(cfg)
                     left, avail = margin, width - 2 * margin
+                    justify = {"left": "L", "right": "R"}.get(b.get("align"), "C")
                     out.append(
-                        f"^FO{left},{b['y']}^FB{avail},1,0,C,0^A0N,{b['h']},{b['fw']}"
+                        f"^FO{left},{b['y']}^FB{avail},1,0,{justify},0^A0N,{b['h']},{b['fw']}"
                         f"^FH_^FD{zpl_escape(b['text'])}^FS"
                     )
-        out += ["^PQ1", "^XZ"]
+        out += [f"^PQ{max(1, int(quantity))}", "^XZ"]
     return "\n".join(out) + "\n"
 
 
@@ -802,7 +810,8 @@ def to_html(pages, cfg, metrics=None):
                     )
                 else:
                     cls = "nsk-t nsk-b" if b["bold"] else "nsk-t"
-                    pos = f"left:{_mm(margin, cfg)};width:{_mm(width - 2 * margin, cfg)};top:{_mm(b['y'], cfg)}"
+                    pos = (f"left:{_mm(margin, cfg)};width:{_mm(width - 2 * margin, cfg)};top:{_mm(b['y'], cfg)};"
+                           f"text-align:{b.get('align', 'center')}")
                     out.append(
                         f'<div class="{cls}" style="{pos};font-size:{_mm(b["h"], cfg)}">{html.escape(b["text"])}</div>'
                     )
@@ -815,6 +824,232 @@ def size_text(cfg):
     orientation = cfg.get("orientation")
     suffix = f", {orientation}" if orientation else ""
     return f"{_fmt_number(cfg['widthMm'])}x{_fmt_number(cfg['heightMm'])}mm @{cfg['dpi']}dpi{suffix}"
+
+
+# --- Scratchpad: free text on a label ------------------------------------------
+#
+# A Scratchpad label is a list of text fields - Text 1, Text 2, ... as many as
+# the person adds - plus, when they number the copies, a counter ("Box 3 of
+# 12", or just "Box 3"). Each field has its own horizontal alignment (left /
+# center / right), vertical position (top / middle / bottom) and size: a size
+# in points, like a word processor, or Auto (the default) - as big as the label
+# allows, getting smaller as more text is typed. Fields given the same
+# position are stacked there in order (texts first, the counter last). Fields
+# never overlap and never run off the label:
+#   1. Auto fields all get the same size: the largest that fits with every
+#      fixed-size field at the size chosen for it.
+#   2. If the fixed sizes don't fit even with Auto fields at their smallest,
+#      every fixed size shrinks by the same factor too (the page says so).
+#   3. Nothing ever goes below SCRATCH_MIN_PT - past that it's an error, not
+#      an unreadable label.
+
+SCRATCH_ALIGNS = ("left", "center", "right")
+SCRATCH_VALIGNS = ("top", "middle", "bottom")
+SCRATCH_NUMBER_FORMATS = ("of_total", "count")  # "3 of 12" / "3"
+SCRATCH_MIN_PT = 8
+SCRATCH_MAX_PT = 300
+SCRATCH_MAX_FIELDS = 10
+SCRATCH_MAX_COPIES = 300
+SCRATCH_MAX_TEXT = 2000  # all the text fields together
+SCRATCH_MAX_PREFIX = 60
+SCRATCH_LINE_SPACING = 1.15
+# Space between two fields stacked in the same position, x the larger font.
+SCRATCH_FIELD_GAP = 0.35
+SCRATCH_SHRINK = 0.93
+# Auto size is found to the nearest half point.
+SCRATCH_AUTO_STEP = 0.5
+
+
+def pt_dots(pt, dpi):
+    """A font size in points (1/72 inch, as in a word processor) -> dots."""
+    return int(round(pt / 72.0 * dpi))
+
+
+def scratch_counter_text(prefix, number_format, number, total):
+    """ "Box 3 of 12" / "Box 3" - or, with no prefix, "3 of 12" / "3"."""
+    count = f"{number} of {total}" if number_format == "of_total" else str(number)
+    return f"{prefix} {count}" if prefix else count
+
+
+def _shrunk(size_pt, scale):
+    """A chosen size after shrink-to-fit - never below SCRATCH_MIN_PT, the
+    smallest anyone could choose: shrinking stops there rather than printing
+    something nobody can read."""
+    return max(float(SCRATCH_MIN_PT), min(size_pt, size_pt * scale))
+
+
+def _field_size(size_pt, fit):
+    """The size a field prints at: Auto (None) -> the fit's auto size, else
+    its chosen size after any shrink. fit = (auto_pt, scale, break_words)
+    from scratch_fit."""
+    auto_pt, scale = fit[0], fit[1]
+    return auto_pt if size_pt is None else _shrunk(size_pt, scale)
+
+
+def scratch_fields(spec, copy_number, fit=(SCRATCH_MAX_PT, 1.0, False)):
+    """The fields on one copy, each {"text", "align", "valign", "sizePt"} with
+    its final size: every text field that has text, then - when numbering -
+    the counter for this copy. `spec` is app.py's checked Scratchpad request:
+    {"fields": [{"value", "align", "valign", "sizePt": pt | None (Auto)}, ...],
+     "copies", "numbering": None | {"prefix", "format", "align", "valign", "sizePt"}}."""
+    fields = []
+    for field in spec["fields"]:
+        if field["value"].strip():
+            fields.append({"text": field["value"], "align": field["align"], "valign": field["valign"],
+                           "sizePt": _field_size(field["sizePt"], fit)})
+    numbering = spec.get("numbering")
+    if numbering:
+        fields.append({
+            "text": scratch_counter_text(numbering["prefix"], numbering["format"], copy_number, spec["copies"]),
+            "align": numbering["align"], "valign": numbering["valign"],
+            "sizePt": _field_size(numbering["sizePt"], fit),
+        })
+    return fields
+
+
+def scratch_sizes(spec, fit):
+    """What each field actually prints at, for the page: {"fields": [pt or
+    None (no text) per text field, in order], "counter": pt (when numbering)}."""
+    sizes = {"fields": [round(_field_size(f["sizePt"], fit), 1) if f["value"].strip() else None
+                        for f in spec["fields"]]}
+    if spec.get("numbering"):
+        sizes["counter"] = round(_field_size(spec["numbering"]["sizePt"], fit), 1)
+    return sizes
+
+
+def _aligned_block(m, margin, avail_w, y, height, text, align):
+    """One line of Scratchpad text, placed left / centred / right."""
+    w = m.width(text, height, False)
+    if align == "left":
+        x = margin
+    elif align == "right":
+        x = margin + max(0, avail_w - w)
+    else:
+        x = margin + max(0, (avail_w - w) / 2.0)
+    return {"kind": "text", "x": int(round(x)), "y": int(y), "h": int(height), "fw": _font_width(height, False),
+            "bold": False, "text": text, "w": float(w), "align": align}
+
+
+def _scratch_place(m, fields, cfg, break_words=False):
+    """The fields (from scratch_fields) laid out on one label - a page of
+    blocks like layout()'s - or None if they don't fit: a word wider than
+    the label (unless break_words - then it's cut, the last resort for, say,
+    a long code with no spaces), a field off the label, or two positions
+    overlapping."""
+    width, height, margin = design_size_dots(cfg, m)
+    avail_w = width - 2 * margin
+    zones = {v: [] for v in SCRATCH_VALIGNS}
+    for field in fields:
+        h = pt_dots(field["sizePt"], cfg["dpi"])
+        if h < MIN_FONT_DOTS:
+            return None
+        if not break_words and any(m.width(token, h, False) > avail_w for token in _tokens(field["text"])):
+            return None
+        lines = []
+        for paragraph in field["text"].split("\n"):
+            lines.extend(_wrap(m, paragraph, h, False, avail_w) if paragraph.strip() else [""])
+        if any(m.width(line, h, False) > avail_w for line in lines):
+            return None  # one character wider than the whole label
+        advance = int(round(h * SCRATCH_LINE_SPACING))
+        zones[field["valign"]].append(
+            {"field": field, "h": h, "lines": lines, "advance": advance, "height": (len(lines) - 1) * advance + h}
+        )
+
+    def gap(a, b):
+        return int(round(max(a["h"], b["h"]) * SCRATCH_FIELD_GAP))
+
+    zone_h = {
+        v: sum(e["height"] for e in entries) + sum(gap(a, b) for a, b in zip(entries, entries[1:]))
+        for v, entries in zones.items()
+    }
+    start = {"top": margin, "middle": (height - zone_h["middle"]) // 2, "bottom": height - margin - zone_h["bottom"]}
+    spans = [(start[v], start[v] + zone_h[v]) for v in SCRATCH_VALIGNS if zones[v]]
+    if any(top < margin or bottom > height - margin for top, bottom in spans):
+        return None
+    if any(above[1] > below[0] for above, below in zip(spans, spans[1:])):
+        return None
+
+    blocks = []
+    for v in SCRATCH_VALIGNS:
+        y = start[v]
+        for i, entry in enumerate(zones[v]):
+            if i:
+                y += gap(zones[v][i - 1], entry)
+            for j, line in enumerate(entry["lines"]):
+                if line:
+                    blocks.append(_aligned_block(m, margin, avail_w, y + j * entry["advance"], entry["h"], line,
+                                                 entry["field"]["align"]))
+            y += entry["height"]
+    return blocks
+
+
+def scratch_fit(spec, cfg, metrics=None):
+    """(auto_pt, scale, break_words): the one size every Auto field gets,
+    the shrink applied to fixed sizes, and whether a word had to be cut to
+    fit at all - the same for every copy, since it's measured with the LAST
+    copy's counter ("Box 12 of 12" is the widest). See the rules at the top
+    of this section; words are only ever cut when nothing fits whole even
+    at SCRATCH_MIN_PT. LabelPrintError if there's nothing to print, or it
+    can't fit even then."""
+    m = metrics or metrics_for(cfg)
+    if not scratch_fields(spec, spec["copies"]):
+        raise LabelPrintError("Type something to print first.")
+
+    sizes = [f["sizePt"] for f in spec["fields"] if f["value"].strip()]
+    if spec.get("numbering"):
+        sizes.append(spec["numbering"]["sizePt"])
+    fixed = [s for s in sizes if s is not None]
+    floor, ceiling = float(SCRATCH_MIN_PT), float(SCRATCH_MAX_PT)
+
+    def attempt(break_words):
+        def fits(auto_pt, scale=1.0):
+            fields = scratch_fields(spec, spec["copies"], (auto_pt, scale, break_words))
+            return _scratch_place(m, fields, cfg, break_words) is not None
+
+        # 1. Fixed sizes as chosen; Auto fields as big as that leaves room for.
+        if fits(floor):
+            if len(fixed) == len(sizes) or fits(ceiling):
+                return ceiling, 1.0, break_words
+            lo, hi = floor, ceiling  # lo fits, hi doesn't
+            while hi - lo > SCRATCH_AUTO_STEP:
+                mid = (lo + hi) / 2
+                if fits(mid):
+                    lo = mid
+                else:
+                    hi = mid
+            return math.floor(lo / SCRATCH_AUTO_STEP) * SCRATCH_AUTO_STEP, 1.0, break_words
+        # 2. Doesn't fit even with Auto fields at their smallest: fixed sizes shrink too.
+        scale = 1.0
+        while fixed and max(fixed) * scale > floor:
+            scale *= SCRATCH_SHRINK
+            if fits(floor, scale):
+                return floor, scale, break_words
+        return None
+
+    fit = attempt(False) or attempt(True)
+    if fit is None:
+        raise LabelPrintError(f"That's too much text for one label, even at {SCRATCH_MIN_PT} pt - shorten it.")
+    return fit
+
+
+def scratch_page(spec, cfg, copy_number, fit, metrics=None):
+    """One copy laid out with `fit` (from scratch_fit)."""
+    m = metrics or metrics_for(cfg)
+    page = _scratch_place(m, scratch_fields(spec, copy_number, fit), cfg, fit[2])
+    if page is None:  # can't happen: the widest copy fitted
+        raise LabelPrintError("That text doesn't fit on the label - make it a little smaller.")
+    return page
+
+
+def scratch_pages(spec, cfg, metrics=None):
+    """(pages, quantity, fit) to print: numbered copies are a page each (each
+    has its own number); plain copies are ONE page the printer repeats
+    `quantity` times (^PQ)."""
+    m = metrics or metrics_for(cfg)
+    fit = scratch_fit(spec, cfg, m)
+    if spec.get("numbering"):
+        return [scratch_page(spec, cfg, n, fit, m) for n in range(1, spec["copies"] + 1)], 1, fit
+    return [scratch_page(spec, cfg, 1, fit, m)], spec["copies"], fit
 
 
 # --- Windows print spooler (winspool.drv via ctypes) ---------------------------

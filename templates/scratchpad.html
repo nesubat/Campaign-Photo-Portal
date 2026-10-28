@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="theme-color" content="#231f20">
+  <title>Scratchpad - Campaign Photo Portal</title>
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
+</head>
+<body class="scratchpad-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="home-link" title="Back to main page">🏠</a>
+      <div>
+        <div class="job">Scratchpad</div>
+        <div class="who-sub">{{ ('Prints on ' ~ printer_name) if printer_name else 'No label printer set up' }}</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      {% include "_user_menu.html" %}
+    </div>
+  </header>
+
+  {#- Everything the page needs from the server - kept out of the script body (see upload.html's pageData). -#}
+  <main class="sp-body" id="scratchpad" data-limits='{{ limits|tojson }}' data-has-printer="{{ '1' if printer_name else '0' }}">
+
+    {% if printer_name %}
+    <p class="sp-printer">🖨 Prints on <strong>{{ printer_name }}</strong> · {{ size_text }}</p>
+    {% else %}
+    <p class="banner warn sp-printer-warn">
+      No label printer is set up on the server yet (LABEL_PRINTER_NAME in .env), so nothing can be
+      printed from here - the same printer as the New Store Kit pack labels.
+    </p>
+    {% endif %}
+
+    <section class="sp-card sp-preview-card" aria-label="Preview">
+      <div class="sp-preview" id="spPreview">
+        <img id="spPreviewImg" alt="Label preview" class="hidden">
+        <p id="spPreviewEmpty" class="sp-preview-empty">Type something to see the label.</p>
+      </div>
+      <div class="sp-pager hidden" id="spPager">
+        <button type="button" class="sp-pager-btn" id="spPagePrev" aria-label="Previous copy">‹</button>
+        <span id="spPageLabel">Copy 1 of 1</span>
+        <button type="button" class="sp-pager-btn" id="spPageNext" aria-label="Next copy">›</button>
+      </div>
+      <p class="sp-preview-note hidden" id="spPreviewNote" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="sp-card" aria-labelledby="spTextHeading">
+      <h2 id="spTextHeading" class="sp-heading">Text</h2>
+      {#- scratchpad.js draws one card per text (Text 1, Text 2, ...) from spFieldTemplate. -#}
+      <div id="spFields" class="sp-fields"></div>
+      <button type="button" class="btn secondary sp-add" id="spAddField">+ Add text</button>
+    </section>
+
+    <section class="sp-card" aria-labelledby="spCopiesHeading">
+      <h2 id="spCopiesHeading" class="sp-heading">Copies</h2>
+      <div class="sp-control">
+        <label class="sp-label" for="spCopies">How many</label>
+        <div class="stepper">
+          <button type="button" class="stepper-btn" id="spCopiesDown" aria-label="Fewer copies">−</button>
+          <input type="number" id="spCopies" inputmode="numeric" min="1" max="{{ limits.maxCopies }}" value="1">
+          <button type="button" class="stepper-btn" id="spCopiesUp" aria-label="More copies">+</button>
+        </div>
+      </div>
+
+      <label class="sp-check">
+        <input type="checkbox" id="spNumber">
+        <span>Number the copies <span class="sp-check-sub">- adds a field like “Box 3 of 10”</span></span>
+      </label>
+
+      <div id="spNumberOptions" class="sp-number hidden">
+        <div class="sp-field-head">
+          <span class="sp-field-title">Number</span>
+          <span class="sp-field-summary" id="spNumberSummary"></span>
+          <button type="button" class="sp-icon-btn" id="spNumberFormat"
+                  title="Alignment, position and size" aria-label="Format the number">Aa</button>
+        </div>
+        <label class="sp-label" for="spPrefix">Text before the number</label>
+        <input type="text" id="spPrefix" class="sp-input" placeholder="e.g. Box" maxlength="{{ limits.maxPrefix }}" autocomplete="off">
+
+        <span class="sp-label">Show</span>
+        <div class="seg seg-wide" role="radiogroup" aria-label="Number format">
+          <label><input type="radio" name="numFormat" value="of_total" checked><span id="spFormatOfTotal">1 of 10</span></label>
+          <label><input type="radio" name="numFormat" value="count"><span id="spFormatCount">1</span></label>
+        </div>
+      </div>
+    </section>
+
+    <button type="button" class="sp-clear" id="spClear">Start over</button>
+  </main>
+
+  <template id="spFieldTemplate">
+    <div class="sp-field">
+      <div class="sp-field-head">
+        <span class="sp-field-title"></span>
+        <span class="sp-field-summary"></span>
+        <button type="button" class="sp-icon-btn sp-format-btn" title="Alignment, position and size">Aa</button>
+        <button type="button" class="sp-icon-btn sp-remove-btn" title="Remove this text">×</button>
+      </div>
+      <textarea class="sp-textarea" rows="2" placeholder="Type what to print…" autocomplete="off"></textarea>
+    </div>
+  </template>
+
+  {#- One popup for every field's look (Text N or the number) - opened from its Aa button. -#}
+  <dialog id="spFormatDialog" class="section-dialog sp-dialog" aria-labelledby="spFormatTitle">
+    <div class="section-dialog-header">
+      <h2 id="spFormatTitle">Text 1</h2>
+      <button type="button" class="dialog-close" id="spFormatClose" aria-label="Close">×</button>
+    </div>
+    <div class="section-dialog-body">
+      <div class="sp-control">
+        <span class="sp-label">Align</span>
+        <div class="seg" role="radiogroup" aria-label="Alignment">
+          <label><input type="radio" name="fmtAlign" value="left"><span>Left</span></label>
+          <label><input type="radio" name="fmtAlign" value="center"><span>Center</span></label>
+          <label><input type="radio" name="fmtAlign" value="right"><span>Right</span></label>
+        </div>
+      </div>
+      <div class="sp-control">
+        <span class="sp-label">Position</span>
+        <div class="seg" role="radiogroup" aria-label="Position">
+          <label><input type="radio" name="fmtValign" value="top"><span>Top</span></label>
+          <label><input type="radio" name="fmtValign" value="middle"><span>Middle</span></label>
+          <label><input type="radio" name="fmtValign" value="bottom"><span>Bottom</span></label>
+        </div>
+      </div>
+      <div class="sp-control">
+        <span class="sp-label">Size</span>
+        <div class="seg" role="radiogroup" aria-label="Size">
+          <label><input type="radio" name="fmtSizeMode" value="auto"><span>Auto</span></label>
+          <label><input type="radio" name="fmtSizeMode" value="fixed"><span>Set size</span></label>
+        </div>
+      </div>
+      <div class="sp-control" id="spFormatSizeRow">
+        <label class="sp-label" for="spFormatSize">Size (pt)</label>
+        <div class="stepper">
+          <button type="button" class="stepper-btn" id="spFormatSizeDown" aria-label="Smaller">−</button>
+          <input type="number" id="spFormatSize" inputmode="numeric" min="{{ limits.minPt }}" max="{{ limits.maxPt }}">
+          <button type="button" class="stepper-btn" id="spFormatSizeUp" aria-label="Bigger">+</button>
+        </div>
+      </div>
+      <p class="hint" id="spFormatHint"></p>
+      <button type="button" class="btn primary full" id="spFormatDone">Done</button>
+    </div>
+  </dialog>
+
+  <div class="sp-print-bar">
+    <p class="sp-notice hidden" id="spNotice" role="status" aria-live="polite"></p>
+    <button type="button" class="btn primary full" id="spPrint"{% if not printer_name %} disabled{% endif %}>🖨 Print</button>
+  </div>
+
+  <script src="{{ asset('topbar.js') }}"></script>
+  <script src="{{ asset('scratchpad.js') }}"></script>
+</body>
+</html>

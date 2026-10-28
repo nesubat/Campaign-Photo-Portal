@@ -27,6 +27,7 @@ Run for real use (all-day, several phones):  py serve.py   <- use this one day-t
 
 Both bind 0.0.0.0:5000 so phones on the hotspot/LAN can reach it.
 """
+import base64
 import io
 import os
 import re
@@ -2146,6 +2147,152 @@ def labels_preview(session_id):
         test_label=test_label,
         back_url=f"/session/{session_id}",
     )
+
+
+# --- Scratchpad: free text printed on the label printer (labels.scratch_*) ------
+
+def _scratch_style(raw, default_size, default_valign):
+    """(align, valign, sizePt) from one field's request - anything unknown
+    falls back to a default; sizePt is a size kept within what labels.py
+    allows, or None for "auto" (as big as fits)."""
+    align = raw.get("align") if raw.get("align") in labels.SCRATCH_ALIGNS else "center"
+    valign = raw.get("valign") if raw.get("valign") in labels.SCRATCH_VALIGNS else default_valign
+    raw_size = raw.get("sizePt", default_size)
+    if raw_size is None or raw_size == "auto":
+        return align, valign, None
+    try:
+        size = float(raw_size)
+        if size != size:  # NaN
+            raise ValueError
+    except (TypeError, ValueError):
+        if default_size is None:
+            return align, valign, None
+        size = default_size
+    return align, valign, min(max(size, labels.SCRATCH_MIN_PT), labels.SCRATCH_MAX_PT)
+
+
+def _scratch_spec(data):
+    """The Scratchpad request (JSON) -> (spec for labels.scratch_*, error).
+    {"fields": [{"value", "align", "valign", "sizePt": pt | "auto"}, ...], "copies",
+     "numbering": {"enabled", "prefix", "format", "align", "valign", "sizePt"}}
+    A field's defaults are centred, in the middle, Auto size."""
+    raw_fields = data.get("fields")
+    if not isinstance(raw_fields, list) or not raw_fields:
+        raw_fields = [{}]
+    if len(raw_fields) > labels.SCRATCH_MAX_FIELDS:
+        return None, f"{labels.SCRATCH_MAX_FIELDS} texts at most."
+    fields = []
+    for raw in raw_fields:
+        raw = raw if isinstance(raw, dict) else {}
+        value = str(raw.get("value") or "").replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+        align, valign, size = _scratch_style(raw, None, "middle")
+        fields.append({"value": value, "align": align, "valign": valign, "sizePt": size})
+    if sum(len(f["value"]) for f in fields) > labels.SCRATCH_MAX_TEXT:
+        return None, f"That's too much text - {labels.SCRATCH_MAX_TEXT} characters at most."
+    copies = _int_or_none(data.get("copies"))
+    if copies is None or not (1 <= copies <= labels.SCRATCH_MAX_COPIES):
+        return None, f"Copies must be a number from 1 to {labels.SCRATCH_MAX_COPIES}."
+    numbering = None
+    num_raw = data.get("numbering") if isinstance(data.get("numbering"), dict) else {}
+    if num_raw.get("enabled"):
+        prefix = " ".join(str(num_raw.get("prefix") or "").split())
+        if len(prefix) > labels.SCRATCH_MAX_PREFIX:
+            return None, f"The text before the number can be {labels.SCRATCH_MAX_PREFIX} characters at most."
+        number_format = num_raw.get("format") if num_raw.get("format") in labels.SCRATCH_NUMBER_FORMATS else "of_total"
+        n_align, n_valign, n_size = _scratch_style(num_raw, 28, "bottom")
+        numbering = {"prefix": prefix, "format": number_format, "align": n_align, "valign": n_valign,
+                     "sizePt": n_size}
+    if not any(f["value"].strip() for f in fields) and numbering is None:
+        return None, "Type something to print first."
+    return {"fields": fields, "copies": copies, "numbering": numbering}, None
+
+
+@app.route("/scratchpad")
+@auth.login_required
+def scratchpad_page():
+    """A page anyone logged in can type on and print - any text, aligned and
+    sized as they like, as many copies as they need, optionally numbered
+    ("Box 3 of 12"). Prints on the same printer, with the same label
+    settings, as the pack labels."""
+    cfg = load_label_config()
+    return render_template(
+        "scratchpad.html",
+        printer_name=cfg["printerName"],
+        size_text=labels.size_text(cfg),
+        limits={
+            "minPt": labels.SCRATCH_MIN_PT, "maxPt": labels.SCRATCH_MAX_PT,
+            "maxCopies": labels.SCRATCH_MAX_COPIES, "maxText": labels.SCRATCH_MAX_TEXT,
+            "maxFields": labels.SCRATCH_MAX_FIELDS,
+            "maxPrefix": labels.SCRATCH_MAX_PREFIX,
+        },
+    )
+
+
+@app.route("/api/scratchpad/preview", methods=["POST"])
+@auth.login_required
+def api_scratchpad_preview():
+    """One copy of the Scratchpad as the printer will get it (a PNG of the
+    very image sent), plus what it took to fit. "page" = which copy (its
+    number), so numbered copies can be paged through. Text that can't fit
+    at all is ok=false with code too_big - the page shows why."""
+    data = request.get_json(silent=True) or {}
+    spec, error = _scratch_spec(data)
+    if error:
+        return jsonify(ok=False, code="invalid", error=error), 400
+    cfg = load_label_config()
+    m = labels.metrics_for(cfg)
+    pages = spec["copies"] if spec["numbering"] else 1
+    page_number = min(max(_int_or_none(data.get("page")) or 1, 1), pages)
+    try:
+        fit = labels.scratch_fit(spec, cfg, m)
+        page = labels.scratch_page(spec, cfg, page_number, fit, m)
+    except labels.LabelPrintError as exc:
+        return jsonify(ok=False, code="too_big", error=str(exc))
+    image = None
+    if m.kind == "ttf":
+        image = "data:image/png;base64," + base64.b64encode(labels.page_png(page, cfg, m)).decode("ascii")
+    width_mm, height_mm = labels.design_size_mm(cfg, m)
+    return jsonify(
+        ok=True, image=image, page=page_number, pages=pages, copies=spec["copies"],
+        sizes=labels.scratch_sizes(spec, fit), shrunk=fit[1] < 0.999,
+        widthMm=width_mm, heightMm=height_mm, printer=cfg["printerName"], sizeText=labels.size_text(cfg),
+    )
+
+
+@app.route("/api/scratchpad/print", methods=["POST"])
+@auth.login_required
+def api_scratchpad_print():
+    """Prints the Scratchpad: every copy in ONE spooler job, so they come out
+    together and in order. Plain copies are one label the printer repeats;
+    numbered copies are one label each."""
+    data = request.get_json(silent=True) or {}
+    spec, error = _scratch_spec(data)
+    if error:
+        return jsonify(ok=False, code="invalid", error=error), 400
+    cfg = load_label_config()
+    printer = cfg["printerName"]
+    if not printer:
+        return jsonify(ok=False, code="printer_not_configured",
+                       error="No label printer is set up on the server yet (LABEL_PRINTER_NAME in .env)."), 409
+    first_line = next((line.strip() for field in spec["fields"] for line in field["value"].split("\n")
+                       if line.strip()), "")
+    try:
+        pages, quantity, fit = labels.scratch_pages(spec, cfg)
+        job_id = labels.send_raw(
+            labels.to_zpl(pages, cfg, quantity=quantity).encode("utf-8"), printer,
+            doc_name=f"Scratchpad - {first_line[:40]}" if first_line else "Scratchpad",
+        )
+    except labels.LabelPrintError as exc:
+        return jsonify(ok=False, code="print_failed", error=str(exc)), 502
+    except Exception as exc:  # noqa: BLE001 - never a 500 over a printer
+        print(f"[scratchpad] printing failed: {exc!r}")
+        return jsonify(ok=False, code="print_failed", error=f"Printing failed: {exc}"), 502
+    count = len(pages) * quantity
+    print(f'[scratchpad] {g.user["name"]} printed {count} label(s) on "{printer}"')
+    message = f'Printed {count} cop{"y" if count == 1 else "ies"} on "{printer}".'
+    if fit[1] < 0.999:
+        message += " The text was made smaller to fit."
+    return jsonify(ok=True, message=message, jobId=job_id, sizes=labels.scratch_sizes(spec, fit))
 
 
 @app.route("/gallery/<job_number>")

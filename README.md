@@ -16,8 +16,8 @@ mirrored to a company Google Drive folder in the background.
 | `drive_sync.py` | Background thread that pushes photos to Google Drive |
 | `config.py` | All the tunable settings in one place |
 | `kits.py` | New Store Kit rules: item numbers, pack lines, the "missing numbers" report |
-| `labels.py` | Pack labels for the Zebra printer (ZPL) + `py labels.py --list-printers` / `--test-print` |
-| `templates/`, `static/` | The web pages staff and supervisors see (`static/kit.js` = the New Store Kit page) |
+| `labels.py` | Pack labels and Scratchpad pages for the Zebra printer (ZPL) + `py labels.py --list-printers` / `--test-print` |
+| `templates/`, `static/` | The web pages staff and supervisors see (`static/kit.js` = the New Store Kit page, `static/scratchpad.js` = the Scratchpad) |
 | `apps-script/DriveUploader.gs` | Deploy this separately to Google Apps Script |
 | `data/employees.json` | Preset name dropdown - edit with real staff names |
 | `.env.example` | Copy to `.env` once Drive is set up (never committed - see .gitignore) |
@@ -171,6 +171,19 @@ at their real size instead. To set up the printer, on this machine:
 3. `py labels.py --sample-png sample.png` shows the sample label on screen (no printing),
    then `py labels.py --test-print` prints it.
 4. Restart `serve.py` - its startup lines say which printer (and size) Print will use.
+
+### Scratchpad (same label printer)
+
+User menu → **Scratchpad** (anyone logged in): type any text and print as many copies
+as needed (up to 300) on the pack-label printer above, with the same label settings.
+**+ Add text** adds Text 2, Text 3 ... (up to 10), each with its own look: tap its
+**Aa** for alignment (left / center / right), position (top / middle / bottom) and
+size - **Auto** (as big as the label allows, smaller as you type more) or a set size in
+points. New texts start centred, in the middle, on Auto. Tick **Number the copies** to
+add a counter - "Box 3 of 10" or just "Box 3" - with its own **Aa** too. The preview is
+exactly what prints (‹ › pages through numbered copies); set sizes that don't fit are
+made smaller (never below 8 pt) and the page says so. The draft is remembered in that
+browser until **Start over**.
 
 **After updating the code:** `apps-script/DriveUploader.gs` must be redeployed
 (Deploy > Manage deployments > edit > **New version**) for the kit Pack Log sheets and
